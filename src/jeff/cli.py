@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
 
 from jeff import decidebench
-from jeff.schema import write_jsonl
+from jeff.filters.contamination import EmbeddingFilter, load_fingerprints, sentence_transformer_encoder
+from jeff.filters.pipeline import assert_clean, run_filters
+from jeff.schema import read_jsonl, write_jsonl
 from jeff.sources.base import build, fetch
 from jeff.sources.registry import SOURCES
 
@@ -64,6 +67,24 @@ def cmd_dev(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_filter(args: argparse.Namespace) -> int:
+    src, out = Path(args.inp), Path(args.out)
+    decisions = [d for path in sorted(src.glob("*.jsonl")) for d in read_jsonl(path)]
+    fp = load_fingerprints()
+    embed = None if args.no_embed else EmbeddingFilter(fp.states, sentence_transformer_encoder())
+    kept, report = run_filters(decisions, fp, embed)
+    assert_clean(kept, fp)
+    by_source: dict[str, list] = defaultdict(list)
+    for d in kept:
+        by_source[d.source].append(d)
+    out.mkdir(parents=True, exist_ok=True)
+    for source, rows in by_source.items():
+        write_jsonl(out / f"{source}.jsonl", rows)
+    _write_stats_atomically(out / "filter_report.json", report)
+    print(json.dumps(report, indent=2))
+    return 0
+
+
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jeff")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -77,6 +98,12 @@ def make_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("dev", help="write the DecideBench examples pool as the dev set")
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_dev)
+
+    p = sub.add_parser("filter", help="apply licence, contamination and dedupe filters")
+    p.add_argument("--in", dest="inp", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--no-embed", action="store_true", help="skip the embedding filter (tests only)")
+    p.set_defaults(func=cmd_filter)
     return parser
 
 

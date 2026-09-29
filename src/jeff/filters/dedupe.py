@@ -1,0 +1,13 @@
+"""Near-duplicate key: normalised state + question."""
+
+from __future__ import annotations
+
+import hashlib
+
+from jeff.filters.contamination import normalize_tokens
+from jeff.schema import Decision
+
+
+def dedupe_key(d: Decision) -> str:
+    text = " ".join(normalize_tokens(f"{d.state}\n{d.question}"))
+    return hashlib.sha1(text.encode()).hexdigest()
