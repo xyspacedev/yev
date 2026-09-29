@@ -2649,6 +2649,238 @@ git commit -m "feat: add filter pipeline, report and filter command"
 
 ---
 
+### Task 11b: fast-decisions adapter
+
+Added 2026-09-29 at the user's request.
+
+- **What the source is:** `fastino/fast-decisions` (Apache-2.0) publishes only its development split: 17 domain files, 100 rows each, 1,700 rows in total. Fastino holds its test split privately.
+- **Why training on it is allowed:** it is the one exception to "never train on dev splits". The published files are not the benchmark, so training on them doesn't contaminate Fastino's test.
+- **What it costs:** we can no longer use fast-decisions as an independent out-of-domain check.
+- **How HF loads it:** each config is a single `data_files` entry, so it loads as split `train`.
+
+**Files:**
+- Create: `src/jeff/sources/fast_decisions.py`
+- Modify: `src/jeff/sources/registry.py` (append one spec per config)
+- Test: `tests/test_fast_decisions.py`
+
+**Interfaces:**
+- Consumes: `Decision`, `Option` (Task 1); `humanize`, `slug`, `pick_distractors`, `SourceSpec` (Task 4).
+- Produces:
+  - `FAST_DECISIONS_CONFIGS: tuple[str, ...]` (17 names).
+  - `ORDERED_SCALES: frozenset[tuple[str, ...]]`.
+  - `convert_fast_decisions(row, i, rng, labels) -> list[Decision]`: one or more Decisions per head.
+
+Row shape (verified 2026-09-29):
+
+```
+{"input": str,
+ "output": {"classifications": [
+   {"task": str, "true_label": [str, ...], "labels": [str, ...], "multi_label": bool}]}}
+```
+
+Head kinds in the release:
+
+| Kind | Heads | Mapping |
+|---|---|---|
+| yes/no | `should_handoff`, `asking_status`, `urgent`, `needs_reply`, `is_phishing`, `upset`, `contains_pii` | Noul |
+| Ordered | sentiment (`negative`, `neutral`, `positive`), urgency (`low`, `normal`, `high`, `critical`) | Score, in the given order |
+| Multi-label | `product_area`, `aspects`, `genres` | One Noul per candidate label: "does X apply?" |
+| Everything else | — | Choice over the gold plus distractors from that head's own `labels` (3–6 options) |
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/test_fast_decisions.py`:
+
+```python
+import random
+
+from jeff.sources.fast_decisions import FAST_DECISIONS_CONFIGS, convert_fast_decisions
+from jeff.sources.registry import SOURCES
+
+R = random.Random(0)
+INTENTS = [f"intent_{i}" for i in range(28)]
+
+
+def row(*heads, text="[channel] email\n[utterance] I was charged twice, please refund."):
+    return {"input": text, "output": {"classifications": list(heads)}}
+
+
+def head(task, gold, labels, multi=False):
+    return {"task": task, "true_label": gold, "labels": labels, "multi_label": multi}
+
+
+def test_single_label_head_becomes_choice_with_3_to_6_options():
+    for _ in range(20):
+        [d] = convert_fast_decisions(row(head("intent", ["intent_7"], INTENTS)), 3, R, [])
+        assert d.type == "choice" and d.gold == "intent_7" and 3 <= len(d.keys) <= 6
+        assert d.id == "3:intent" and d.family == "fast_decisions"
+        assert d.state.startswith("[channel] email")
+
+
+def test_yes_no_head_becomes_noul():
+    [d] = convert_fast_decisions(row(head("is_phishing", ["yes"], ["yes", "no"])), 0, R, [])
+    assert d.type == "noul" and d.keys == ["yes", "no"] and d.gold == "yes"
+    [d] = convert_fast_decisions(row(head("urgent", ["no"], ["no", "yes"])), 0, R, [])
+    assert d.keys == ["yes", "no"] and d.gold == "no"
+
+
+def test_ordered_heads_become_score_in_order():
+    [d] = convert_fast_decisions(row(head("sentiment", ["neutral"], ["negative", "neutral", "positive"])), 0, R, [])
+    assert d.type == "score" and d.keys == ["negative", "neutral", "positive"] and d.gold == "neutral"
+    [d] = convert_fast_decisions(row(head("urgency", ["critical"], ["low", "normal", "high", "critical"])), 0, R, [])
+    assert d.type == "score" and d.keys == ["low", "normal", "high", "critical"]
+
+
+def test_multi_label_head_becomes_one_noul_per_label():
+    labels = ["food", "service", "price"]
+    out = convert_fast_decisions(row(head("aspects", ["food", "price"], labels, multi=True)), 5, R, [])
+    assert [d.type for d in out] == ["noul"] * 3
+    assert {d.id: d.gold for d in out} == {"5:aspects:food": "yes", "5:aspects:service": "no", "5:aspects:price": "yes"}
+    assert all("food" in d.question or "service" in d.question or "price" in d.question for d in out)
+
+
+def test_several_heads_per_row_and_bad_heads_skipped():
+    out = convert_fast_decisions(
+        row(
+            head("sentiment", ["negative"], ["negative", "neutral", "positive"]),
+            head("intent", ["not_a_label"], INTENTS),
+            head("intent2", ["intent_1", "intent_2"], INTENTS),
+        ),
+        0, R, [],
+    )
+    assert [d.id for d in out] == ["0:sentiment"]
+
+
+def test_blank_input_skipped():
+    assert convert_fast_decisions(row(head("urgent", ["no"], ["yes", "no"]), text="  "), 0, R, []) == []
+
+
+def test_registry_has_one_spec_per_config():
+    specs = [s for s in SOURCES if s.hf_id == "fastino/fast-decisions"]
+    assert sorted(s.config for s in specs) == sorted(FAST_DECISIONS_CONFIGS)
+    assert len(FAST_DECISIONS_CONFIGS) == 17
+    assert {s.licence for s in specs} == {"apache-2.0"} and {s.split for s in specs} == {"train"}
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/test_fast_decisions.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'jeff.sources.fast_decisions'`.
+
+- [ ] **Step 3: Write the implementation**
+
+`src/jeff/sources/fast_decisions.py`:
+
+```python
+"""fastino/fast-decisions (Apache-2.0): published development split, one config per domain.
+
+Trained on at the user's request; Fastino's test split is private, so this does
+not contaminate their benchmark.
+"""
+
+from __future__ import annotations
+
+import random
+
+from jeff.schema import Decision, Option
+from jeff.sources.base import humanize, pick_distractors, slug
+
+FAST_DECISIONS_CONFIGS = (
+    "agent_handoff", "banking_intent", "benefits_request", "clinic_request", "document_type",
+    "email_triage", "news_topic", "paper_field", "product_feedback", "restaurant_review",
+    "review_sentiment", "screen_tags", "sports_recap", "support_intent", "support_topic",
+    "ticket_route", "travel_request",
+)
+
+ORDERED_SCALES = frozenset(
+    {
+        ("negative", "neutral", "positive"),
+        ("low", "normal", "high", "critical"),
+    }
+)
+
+
+def _decision(id: str, type: str, state: str, question: str, options: list[Option], gold: str) -> Decision:
+    return Decision(
+        id=id, type=type, state=state, question=question, options=options, gold=gold,
+        family="fast_decisions", source="", licence="",
+    )
+
+
+def _yes_no(subject: str) -> list[Option]:
+    return [Option("yes", f"Yes: {subject} applies."), Option("no", f"No: {subject} does not apply.")]
+
+
+def _head(i: int, text: str, head: dict, rng: random.Random) -> list[Decision]:
+    task, labels, gold = head["task"], head["labels"], head["true_label"]
+    name = humanize(task).lower()
+    if head["multi_label"]:
+        return [
+            _decision(
+                f"{i}:{task}:{slug(label)}", "noul", text,
+                f"Does the {name} of this input include {humanize(label).lower()}?",
+                _yes_no(humanize(label).lower()), "yes" if label in gold else "no",
+            )
+            for label in labels
+        ]
+    if len(gold) != 1 or gold[0] not in labels:
+        return []
+    [g] = gold
+    id = f"{i}:{task}"
+    if sorted(labels) == ["no", "yes"]:
+        return [_decision(id, "noul", text, f"For this input: {name}?", _yes_no(name), g)]
+    if tuple(labels) in ORDERED_SCALES:
+        options = [Option(slug(label), f"The {name} is {humanize(label).lower()}.") for label in labels]
+        return [_decision(id, "score", text, f"What is the {name} of this input?", options, slug(g))]
+    chosen = pick_distractors(g, labels, rng)
+    options = [Option(slug(label), f"The {name} is {humanize(label).lower()}.") for label in chosen]
+    return [_decision(id, "choice", text, f"What is the {name} of this input?", options, slug(g))]
+
+
+def convert_fast_decisions(row: dict, i: int, rng: random.Random, labels: list[str]) -> list[Decision]:
+    text = (row.get("input") or "").strip()
+    if not text:
+        return []
+    out: list[Decision] = []
+    for head in row["output"]["classifications"]:
+        out.extend(_head(i, text, head, rng))
+    return out
+```
+
+Append to `SOURCES` in `src/jeff/sources/registry.py`. Add the import:
+
+```python
+from jeff.sources.fast_decisions import FAST_DECISIONS_CONFIGS, convert_fast_decisions
+```
+
+and, after the `SOURCES` list literal:
+
+```python
+# fastino/fast-decisions: published dev split (test is private); trained on at the user's request.
+SOURCES += [
+    SourceSpec(f"fastdec_{config}", "fastino/fast-decisions", config, "train", "apache-2.0",
+               convert_fast_decisions, 1000)
+    for config in FAST_DECISIONS_CONFIGS
+]
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/test_fast_decisions.py tests/test_registry.py -v`, then `uv run pytest -v`.
+Expected: all pass.
+
+Run: `uv run python -m jeff build-public --out /tmp/fastdec-check --only fastdec_email_triage`
+Expected: exit 0 and a stats line with `kept` > 300. `email_triage` has 4 heads × 100 rows.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/jeff/sources/fast_decisions.py src/jeff/sources/registry.py tests/test_fast_decisions.py
+git commit -m "feat: add fastino/fast-decisions adapter"
+```
+
+---
+
 ### Task 12: Build the real public pool and dev set
 
 This task runs the pipeline on real data. Its deliverable is the filtered pool and report in a

@@ -33,6 +33,7 @@ with no generated text, calibrated probabilities, and TypeSafe's `/v1/systemone`
    R-Judge, IFEval, RuLES, LegalBench tests, Contrast Sets, DynaBench `test`, When2Call `mcq`/`llm_judge`,
    WildGuardTest, JevBench, and every public test/validation split.
 5. **Test set is run once**, at the end. All tuning uses the dev set.
+6. **Exception to rule 4, added 2026-09-29 at the user's request:** `fastino/fast-decisions` is trained on. It publishes only its development split, and Fastino holds the test split privately, so this doesn't contaminate their benchmark. The cost is that fast-decisions can no longer serve as an independent out-of-domain check for jeff-4b.
 
 ## 3. Architecture
 
@@ -147,6 +148,7 @@ Each run writes `filter_report.json` (rows removed per filter, per source).
 | Sentiment | DynaSent, GoEmotions |
 | Triage | help-desk-tickets, CVE severity, it-support-tickets |
 | Replay | BoolQ, ARC, CommonsenseQA, OpenBookQA, WinoGrande, HellaSwag |
+| Multi-domain decisions | fastino/fast-decisions: 17 domains, published dev split (rule 6) |
 
 Each source's licence is re-verified in its adapter before first use.
 
