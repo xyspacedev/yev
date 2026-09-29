@@ -18,9 +18,10 @@ NGRAM = 8
 
 
 def normalize_tokens(text: str) -> list[str]:
-    """Strip accents, then split on anything that isn't a-z/0-9, so ' and ' both separate words."""
+    """Strip accents and format characters, then split on anything that isn't a-z/0-9."""
     decomposed = unicodedata.normalize("NFKD", text)
-    stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    stripped = "".join(ch for ch in decomposed
+                       if unicodedata.category(ch) != "Cf" and not unicodedata.combining(ch))
     return TOKEN_RE.findall(stripped.lower())
 
 
@@ -54,7 +55,7 @@ def load_fingerprints() -> Fingerprints:
 
 
 def has_canary(d: Decision) -> bool:
-    return decidebench.CANARY_GUID in json.dumps(d.to_dict(), ensure_ascii=False)
+    return decidebench.CANARY_GUID.lower() in json.dumps(d.to_dict(), ensure_ascii=False).lower()
 
 
 def overlaps(d: Decision, fp: Fingerprints) -> bool:
