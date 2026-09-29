@@ -44,3 +44,19 @@ def test_sliced_train_split_allowed():
 def test_bad_licence_refused():
     with pytest.raises(LicenceError, match="licence"):
         check("some/dataset", "cc-by-nc-4.0")
+
+
+@pytest.mark.parametrize("split", ["train[:10]+test[:10]", "train+validation", "train[:5%]+validation"])
+def test_compound_splits_with_non_train_refused(split):
+    with pytest.raises(LicenceError, match="split"):
+        check("legacy-datasets/banking77", "cc-by-4.0", split=split)
+
+
+def test_compound_all_train_splits_allowed():
+    check("legacy-datasets/banking77", "cc-by-4.0", split="train[:10]+train[20:30]")
+
+
+@pytest.mark.parametrize("hf_id", ["Facebook/ANLI", "choyiny/DecideBench"])
+def test_forbidden_datasets_case_insensitive(hf_id):
+    with pytest.raises(LicenceError, match="forbidden"):
+        check(hf_id, "mit")

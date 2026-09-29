@@ -11,28 +11,28 @@ ALLOWED = frozenset(
 FORBIDDEN_DATASETS = frozenset(
     {
         # non-commercial or unclear licence
-        "facebook/anli", "allenai/scifact", "lmsys/toxic-chat", "PKU-Alignment/BeaverTails",
-        "kiddothe2b/contract-nli", "takala/financial_phrasebank", "Salesforce/APIGen-MT-5k",
-        "ehovy/race", "cais/mmlu", "Yelp/yelp_review_full", "mteb/amazon_reviews_multi",
-        "SetFit/amazon_reviews_multi_en", "SetFit/sst5", "fancyzhx/ag_news", "ag_news",
-        "fever/fever", "Tobi-Bueck/customer-support-tickets", "DeepPavlov/hwu64",
-        "yueliu1999/GuardReasonerTrain",
+        "facebook/anli", "allenai/scifact", "lmsys/toxic-chat", "pku-alignment/beavertails",
+        "kiddothe2b/contract-nli", "takala/financial_phrasebank", "salesforce/apigen-mt-5k",
+        "ehovy/race", "cais/mmlu", "yelp/yelp_review_full", "mteb/amazon_reviews_multi",
+        "setfit/amazon_reviews_multi_en", "setfit/sst5", "fancyzhx/ag_news", "ag_news",
+        "fever/fever", "tobi-bueck/customer-support-tickets", "deeppalov/hwu64",
+        "yueliu1999/guardreasonertrain",
         # proprietary-model outputs
         "karanxa/agent-action-safety-dataset",
         # licence forbids training
-        "nvidia/Nemotron-AIQ-Agentic-Safety-Dataset-1.0",
+        "nvidia/nemotron-aiq-agentic-safety-dataset-1.0",
         # evaluation-only
-        "choyiny/decidebench", "gorilla-llm/Berkeley-Function-Calling-Leaderboard",
-        "ai-safety-institute/AgentHarm", "thu-coai/Agent-SafetyBench", "normster/RuLES",
-        "google/IFEval", "nguha/legalbench",
+        "choyiny/decidebench", "gorilla-llm/berkeley-function-calling-leaderboard",
+        "ai-safety-institute/agentharm", "thu-coai/agent-safetybench", "normster/rules",
+        "google/ifeval", "nguha/legalbench",
     }
 )
 
 # (hf_id, config) pairs that are forbidden even though other configs are fine.
 FORBIDDEN_CONFIGS = frozenset(
     {
-        ("montehoover/DynaBench", "DynaBench"),  # the benchmark config
-        ("montehoover/DynaBench", "DynaBenchSafetyMix"),  # contains BeaverTails and ToxicChat
+        ("montehoover/dynabench", "DynaBench"),  # the benchmark config
+        ("montehoover/dynabench", "DynaBenchSafetyMix"),  # contains BeaverTails and ToxicChat
     }
 )
 
@@ -46,11 +46,15 @@ def is_allowed(licence: str) -> bool:
 
 
 def check(hf_id: str, licence: str, *, config: str | None = None, split: str = "train") -> None:
-    if hf_id in FORBIDDEN_DATASETS:
+    hf_id_lower = hf_id.lower()
+    if hf_id_lower in FORBIDDEN_DATASETS:
         raise LicenceError(f"{hf_id} is forbidden for training")
-    if (hf_id, config) in FORBIDDEN_CONFIGS:
+    if (hf_id_lower, config) in FORBIDDEN_CONFIGS:
         raise LicenceError(f"{hf_id} config {config} is forbidden for training")
-    if split.split("[")[0] != "train":
-        raise LicenceError(f"{hf_id}: only train splits may be used, got split {split!r}")
+    # Check compound splits: split on "+", strip whitespace, remove slice notation, require all are "train"
+    for part in split.split("+"):
+        part = part.strip().split("[")[0]
+        if part != "train":
+            raise LicenceError(f"{hf_id}: only train splits may be used, got split {split!r}")
     if not is_allowed(licence):
         raise LicenceError(f"{hf_id}: licence {licence!r} is not commercially usable")
