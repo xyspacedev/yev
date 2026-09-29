@@ -8,6 +8,7 @@ from jeff.sources.base import (
     MAX_STATE_CHARS,
     SourceSpec,
     build,
+    fetch,
     humanize,
     pick_distractors,
     sample_pool,
@@ -107,3 +108,21 @@ def test_build_refuses_forbidden_sources():
         build(spec(lambda *a: [], hf_id="facebook/anli"), [])
     with pytest.raises(LicenceError):
         build(spec(lambda *a: [], split="test"), [])
+
+
+def test_build_drops_entire_cluster_if_any_member_is_skipped():
+    def convert(row, i, rng, labels):
+        if i == 0:
+            return [dec(i, cluster="k", state="x" * (MAX_STATE_CHARS + 1))]
+        return [dec(i, cluster="k")]
+
+    rows = [{"_": 0}, {"_": 1}]
+    out, stats = build(spec(convert), rows)
+    assert len(out) == 0
+    assert stats.scanned == 2
+    assert stats.skipped == 2
+
+
+def test_fetch_guards_eagerly_before_network():
+    with pytest.raises(LicenceError):
+        fetch(spec(lambda *a: [], hf_id="toy/toy", split="test"))

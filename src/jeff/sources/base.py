@@ -99,6 +99,7 @@ def build(spec: SourceSpec, rows: Iterable[dict], seed: int = 0) -> tuple[list[D
     rng = random.Random(f"{seed}:{spec.name}")
     stats = BuildStats()
     converted: list[Decision] = []
+    skipped_clusters: set[str] = set()
     for i, row in enumerate(rows):
         stats.scanned += 1
         produced = spec.convert(row, i, rng, labels)
@@ -115,19 +116,27 @@ def build(spec: SourceSpec, rows: Iterable[dict], seed: int = 0) -> tuple[list[D
             )
             if len(d.state) > MAX_STATE_CHARS:
                 stats.skipped += 1
+                if d.cluster_id:
+                    skipped_clusters.add(d.cluster_id)
                 continue
             try:
                 converted.append(d.validate())
             except SchemaError:
                 stats.skipped += 1
+                if d.cluster_id:
+                    skipped_clusters.add(d.cluster_id)
+    # Drop all decisions in clusters that had any member skipped
+    filtered = [d for d in converted if d.cluster_id not in skipped_clusters]
+    stats.skipped += len(converted) - len(filtered)
+    converted = filtered
     stats.converted = len(converted)
     kept = sample_pool(converted, spec.pool_size, seed)
     stats.kept = len(kept)
     return kept, stats
 
 
-def fetch(spec: SourceSpec) -> Iterator[dict]:
-    """Stream the spec's train split, with ClassLabel ints mapped to their names."""
+def _iter_rows(spec: SourceSpec) -> Iterator[dict]:
+    """Load the dataset and yield rows with ClassLabel ints mapped to names."""
     from datasets import ClassLabel, load_dataset
 
     split = spec.split if spec.max_scan is None else f"{spec.split}[:{spec.max_scan}]"
@@ -142,5 +151,11 @@ def fetch(spec: SourceSpec) -> Iterator[dict]:
         for col, names in scalar.items():
             row[col] = names[row[col]] if row[col] is not None and row[col] >= 0 else None
         for col, names in listed.items():
-            row[col] = [names[v] for v in row[col]]
+            row[col] = [names[v] for v in row[col] if v >= 0]
         yield row
+
+
+def fetch(spec: SourceSpec) -> Iterator[dict]:
+    """Load the spec's train split with licence guard, yielding rows with ClassLabel ints mapped to names."""
+    licences.check(spec.hf_id, spec.licence, config=spec.config, split=spec.split)
+    return _iter_rows(spec)
