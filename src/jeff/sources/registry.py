@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from jeff.sources.base import SourceSpec
+from jeff.sources.fast_decisions import FAST_DECISIONS_CONFIGS, convert_fast_decisions
 from jeff.sources.intent import convert_go_emotions, intent_converter
 from jeff.sources.moderation import convert_aegis, convert_civil_comments, convert_dynabench
 from jeff.sources.nli import convert_multi_nli, convert_negation, convert_snli_cf, convert_vitaminc, convert_wanli
@@ -44,6 +45,13 @@ SOURCES: list[SourceSpec] = [
     SourceSpec("arc_challenge", "allenai/ai2_arc", "ARC-Challenge", "train", "cc-by-sa-4.0", convert_multiple_choice, 1000),
     SourceSpec("arc_easy", "allenai/ai2_arc", "ARC-Easy", "train", "cc-by-sa-4.0", convert_multiple_choice, 1000),
     SourceSpec("csqa", "tau/commonsense_qa", None, "train", "mit", convert_multiple_choice, 2000),
+]
+
+# fastino/fast-decisions: published dev split (test is private); trained on at the user's request.
+SOURCES += [
+    SourceSpec(f"fastdec_{config}", "fastino/fast-decisions", config, "train", "apache-2.0",
+               convert_fast_decisions, 1000)
+    for config in FAST_DECISIONS_CONFIGS
 ]
 
 
