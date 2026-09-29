@@ -95,11 +95,7 @@ def test_write_jsonl_refuses_invalid_rows(tmp_path):
 
 
 def test_write_jsonl_atomic_on_error(tmp_path):
-    path = tmp_path / "x.jsonl"
-
-    # Write a valid row first
-    write_jsonl(path, [make()])
-    assert path.exists()
+    path = tmp_path / "fresh.jsonl"
 
     # Try to write with a valid row followed by an invalid row
     invalid = [make(), make(gold="nope")]
@@ -108,4 +104,24 @@ def test_write_jsonl_atomic_on_error(tmp_path):
 
     # The file and temp file should not exist
     assert not path.exists()
+    assert not path.with_suffix(path.suffix + ".tmp").exists()
+
+
+def test_write_jsonl_preserves_existing_file_on_error(tmp_path):
+    path = tmp_path / "x.jsonl"
+    original = make(id="original")
+
+    # Write a valid row first
+    write_jsonl(path, [original])
+    original_content = path.read_text()
+    assert path.exists()
+
+    # Try to write with invalid data to the same path
+    invalid = [make(), make(gold="nope")]
+    with pytest.raises(SchemaError):
+        write_jsonl(path, invalid)
+
+    # The file should still exist with original content, temp file should not exist
+    assert path.exists()
+    assert path.read_text() == original_content
     assert not path.with_suffix(path.suffix + ".tmp").exists()

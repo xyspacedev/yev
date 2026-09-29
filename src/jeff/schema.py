@@ -114,8 +114,6 @@ def write_jsonl(path: Path | str, decisions: Iterable[Decision]) -> int:
     except Exception:
         if tmp_path.exists():
             tmp_path.unlink()
-        if path.exists():
-            path.unlink()
         raise
     return n
 
