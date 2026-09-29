@@ -92,3 +92,20 @@ def test_jsonl_round_trip(tmp_path):
 def test_write_jsonl_refuses_invalid_rows(tmp_path):
     with pytest.raises(SchemaError):
         write_jsonl(tmp_path / "x.jsonl", [make(gold="nope")])
+
+
+def test_write_jsonl_atomic_on_error(tmp_path):
+    path = tmp_path / "x.jsonl"
+
+    # Write a valid row first
+    write_jsonl(path, [make()])
+    assert path.exists()
+
+    # Try to write with a valid row followed by an invalid row
+    invalid = [make(), make(gold="nope")]
+    with pytest.raises(SchemaError):
+        write_jsonl(path, invalid)
+
+    # The file and temp file should not exist
+    assert not path.exists()
+    assert not path.with_suffix(path.suffix + ".tmp").exists()

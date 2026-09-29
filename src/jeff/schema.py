@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -102,11 +103,20 @@ class Decision:
 def write_jsonl(path: Path | str, decisions: Iterable[Decision]) -> int:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
     n = 0
-    with path.open("w", encoding="utf-8") as f:
-        for d in decisions:
-            f.write(json.dumps(d.validate().to_dict(), ensure_ascii=False) + "\n")
-            n += 1
+    try:
+        with tmp_path.open("w", encoding="utf-8") as f:
+            for d in decisions:
+                f.write(json.dumps(d.validate().to_dict(), ensure_ascii=False) + "\n")
+                n += 1
+        os.replace(tmp_path, path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        if path.exists():
+            path.unlink()
+        raise
     return n
 
 
