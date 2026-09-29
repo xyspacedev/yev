@@ -40,6 +40,9 @@ def _yes_no(subject: str) -> list[Option]:
 def _head(i: int, text: str, head: dict, rng: random.Random) -> list[Decision]:
     task, labels, gold = head["task"], head["labels"], head["true_label"]
     name = humanize(task).lower()
+    # Guard against slug collisions that would produce duplicate keys
+    if len({slug(label) for label in labels}) != len(labels):
+        return []
     if head["multi_label"]:
         return [
             _decision(
@@ -53,8 +56,8 @@ def _head(i: int, text: str, head: dict, rng: random.Random) -> list[Decision]:
         return []
     [g] = gold
     id = f"{i}:{task}"
-    if sorted(labels) == ["no", "yes"]:
-        return [_decision(id, "noul", text, f"For this input: {name}?", _yes_no(name), g)]
+    if sorted(label.lower() for label in labels) == ["no", "yes"]:
+        return [_decision(id, "noul", text, f"For this input: {name}?", _yes_no(name), g.lower())]
     if tuple(labels) in ORDERED_SCALES:
         options = [Option(slug(label), f"The {name} is {humanize(label).lower()}.") for label in labels]
         return [_decision(id, "score", text, f"What is the {name} of this input?", options, slug(g))]

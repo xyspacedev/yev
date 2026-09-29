@@ -61,6 +61,17 @@ def test_blank_input_skipped():
     assert convert_fast_decisions(row(head("urgent", ["no"], ["yes", "no"]), text="  "), 0, R, []) == []
 
 
+def test_slug_collision_returns_empty():
+    # "billing refund" and "billing/refund" both slug to "billing_refund"
+    out = convert_fast_decisions(row(head("category", ["billing refund"], ["billing refund", "billing/refund", "other"])), 0, R, [])
+    assert out == []
+
+
+def test_yes_no_casing_insensitive():
+    [d] = convert_fast_decisions(row(head("confirm", ["No"], ["Yes", "No"])), 0, R, [])
+    assert d.type == "noul" and d.keys == ["yes", "no"] and d.gold == "no"
+
+
 def test_registry_has_one_spec_per_config():
     specs = [s for s in SOURCES if s.hf_id == "fastino/fast-decisions"]
     assert sorted(s.config for s in specs) == sorted(FAST_DECISIONS_CONFIGS)
