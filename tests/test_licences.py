@@ -1,6 +1,6 @@
 import pytest
 
-from jeff.licences import LicenceError, check, is_allowed
+from jeff.licences import FORBIDDEN_DATASETS, LicenceError, check, is_allowed
 
 
 def test_permissive_licences_allowed():
@@ -60,3 +60,20 @@ def test_compound_all_train_splits_allowed():
 def test_forbidden_datasets_case_insensitive(hf_id):
     with pytest.raises(LicenceError, match="forbidden"):
         check(hf_id, "mit")
+
+
+@pytest.mark.parametrize("entry", sorted(FORBIDDEN_DATASETS))
+def test_all_forbidden_datasets_blocked_case_insensitive(entry):
+    """Verify every FORBIDDEN_DATASETS entry is blocked regardless of case."""
+    # Test with original case
+    with pytest.raises(LicenceError, match="forbidden"):
+        check(entry, "mit")
+    # Test with uppercase (strongest case variation)
+    with pytest.raises(LicenceError, match="forbidden"):
+        check(entry.upper(), "mit")
+
+
+def test_deeppavlov_hwu64_specifically():
+    """Regression test for DeepPavlov/hwu64 typo (deeppalov vs deeppavlov)."""
+    with pytest.raises(LicenceError, match="forbidden"):
+        check("DeepPavlov/hwu64", "mit")
