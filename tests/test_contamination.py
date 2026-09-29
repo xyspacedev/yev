@@ -10,7 +10,7 @@ from jeff.filters.contamination import (
 from jeff.schema import Decision, Option
 
 BENCH = [{
-    "state": "Agent: billing-bot. Target: prod-primary. Proposed: refund $40 to the customer's card — context: duplicate charge.",
+    "state": "Agent: billing-bot. Target: prod-primary. Proposed: refund $40 to the customer’s card — context: duplicate charge.",
     "question": "How should this be handled?",
     "options": [{"key": "approve", "description": "Proceed automatically."}],
 }]
@@ -23,7 +23,7 @@ def dec(state, question="Which option applies?", desc="Some option text.") -> De
 
 
 def test_normalize_folds_unicode_and_case():
-    assert normalize_tokens("""Café's "Prod" — Replica""") == ["cafe", "s", "prod", "replica"]
+    assert normalize_tokens("Café’s “Prod” — Replica") == ["cafe", "s", "prod", "replica"]
 
 
 def test_overlap_detected_despite_punctuation_and_accents():
@@ -40,7 +40,7 @@ def test_short_or_unrelated_text_does_not_overlap():
 
 def test_overlap_checks_option_descriptions_too():
     fp = build_fingerprints(BENCH)
-    d = dec("unrelated", desc="Agent: billing-bot. Target: prod-primary. Proposed: refund $40 to the customer's card")
+    d = dec("unrelated", desc="Agent: billing-bot. Target: prod-primary. Proposed: refund $40 to the customer’s card")
     assert overlaps(d, fp)
 
 
