@@ -33,6 +33,8 @@ def test_each_filter_drops_and_is_counted():
     r = report["s"]
     assert (r["in"], r["licence"], r["dev_split"], r["canary"], r["ngram"], r["duplicate"], r["out"]) == (6, 1, 1, 1, 1, 1, 1)
     assert r["embedding"] == 0
+    for c in report.values():
+        assert c["in"] == sum(c[k] for k in ("licence", "dev_split", "canary", "ngram", "embedding", "duplicate", "out"))
 
 
 def test_embedding_filter_applied_to_states():
@@ -47,3 +49,24 @@ def test_assert_clean_raises_on_contamination():
     assert_clean([dec(1, "clean")], FP)
     with pytest.raises(ContaminationError):
         assert_clean([dec(2, "return requested 31 days after delivery the policy window is 30 days")], FP)
+
+
+def test_dedupe_key_includes_option_keys():
+    a = dec(1, "Same state.")
+    b = Decision(id="s:2", type="choice", state="Same state.", question="Which applies?",
+                 options=[Option("a", "Option text."), Option("c", "Other.")], gold="a",
+                 family="f", source="s", licence="mit")
+    kept, report = run_filters([a, b], FP, embed=None)
+    assert [d.id for d in kept] == ["s:1", "s:2"] and report["s"]["duplicate"] == 0
+
+
+def test_duplicate_drops_whole_cluster():
+    from dataclasses import replace
+
+    first = dec(1, "Shared state.")
+    m1 = replace(dec(2, "Shared state."), cluster_id="c1")
+    m2 = replace(dec(3, "Different state."), cluster_id="c1")
+    kept, report = run_filters([first, m1, m2], FP, embed=None)
+    assert [d.id for d in kept] == ["s:1"]
+    r = report["s"]
+    assert (r["in"], r["duplicate"], r["out"]) == (3, 2, 1)

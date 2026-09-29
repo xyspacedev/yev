@@ -69,6 +69,9 @@ def cmd_dev(args: argparse.Namespace) -> int:
 
 def cmd_filter(args: argparse.Namespace) -> int:
     src, out = Path(args.inp), Path(args.out)
+    if src.resolve() == out.resolve():
+        print("--in and --out must be different directories")
+        return 2
     decisions = [d for path in sorted(src.glob("*.jsonl")) for d in read_jsonl(path)]
     fp = load_fingerprints()
     embed = None if args.no_embed else EmbeddingFilter(fp.states, sentence_transformer_encoder())
@@ -78,6 +81,8 @@ def cmd_filter(args: argparse.Namespace) -> int:
     for d in kept:
         by_source[d.source].append(d)
     out.mkdir(parents=True, exist_ok=True)
+    for stale in [*out.glob("*.jsonl"), *out.glob("*.jsonl.tmp")]:
+        stale.unlink()
     for source, rows in by_source.items():
         write_jsonl(out / f"{source}.jsonl", rows)
     _write_stats_atomically(out / "filter_report.json", report)

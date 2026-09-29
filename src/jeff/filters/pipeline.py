@@ -40,7 +40,7 @@ def run_filters(
         for start in range(0, len(survivors), batch):
             flagged += embed.too_similar([d.state for d in survivors[start : start + batch]])
         kept_after_embed = []
-        for d, bad in zip(survivors, flagged):
+        for d, bad in zip(survivors, flagged, strict=True):
             if bad:
                 counts[d.source]["embedding"] += 1
             else:
@@ -49,14 +49,28 @@ def run_filters(
 
     seen: set[str] = set()
     kept: list[Decision] = []
+    dropped_clusters: set[str] = set()
     for d in survivors:
         key = dedupe_key(d)
         if key in seen:
             counts[d.source]["duplicate"] += 1
+            if d.cluster_id is not None:
+                dropped_clusters.add(d.cluster_id)
             continue
         seen.add(key)
         kept.append(d)
         counts[d.source]["out"] += 1
+
+    # Clusters stay whole: a cluster that lost a member to dedupe loses all of them.
+    if dropped_clusters:
+        remaining: list[Decision] = []
+        for d in kept:
+            if d.cluster_id in dropped_clusters:
+                counts[d.source]["out"] -= 1
+                counts[d.source]["duplicate"] += 1
+            else:
+                remaining.append(d)
+        kept = remaining
 
     report = {src: {k: c.get(k, 0) for k in REPORT_KEYS} for src, c in counts.items()}
     return kept, report

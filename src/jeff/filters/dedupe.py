@@ -1,4 +1,4 @@
-"""Near-duplicate key: normalised state + question."""
+"""Near-duplicate key: normalised state + question + option keys."""
 
 from __future__ import annotations
 
@@ -10,4 +10,5 @@ from jeff.schema import Decision
 
 def dedupe_key(d: Decision) -> str:
     text = " ".join(normalize_tokens(f"{d.state}\n{d.question}"))
-    return hashlib.sha1(text.encode()).hexdigest()
+    keys = "|".join(sorted(o.key for o in d.options))
+    return hashlib.sha1(f"{text}\n{keys}".encode()).hexdigest()
