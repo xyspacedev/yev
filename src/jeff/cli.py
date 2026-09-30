@@ -23,6 +23,7 @@ from jeff.filters.contamination import (
 )
 from jeff.filters.pipeline import assert_clean, run_filters
 from jeff.filters.shortcut import run_shortcut
+from jeff.mix import build_mix, write_mix
 from jeff.generators import actions, returns, severity
 from jeff.generators.common import EDIT_TYPES
 from jeff.generators.llm.attrib import prepare_pairs, render_attrib_prompt, score_attribution
@@ -138,6 +139,20 @@ def cmd_filter(args: argparse.Namespace) -> int:
     }
     _write_stats_atomically(out / "filter_report.json", report)
     print(json.dumps(report, indent=2))
+    return 0
+
+
+def cmd_mix(args: argparse.Namespace) -> int:
+    recipe_path = Path(args.recipe)
+    if not recipe_path.is_file():
+        print(f"recipe not found: {recipe_path}")
+        return 2
+    recipe = json.loads(recipe_path.read_text())
+    result = build_mix(recipe, load_fingerprints())
+    report = write_mix(result, recipe, args.out)
+    print(f"train={report['train']['rows']} dev={report['dev']['rows']} calibration={report['calibration']['rows']}")
+    for name, b in report["blocks"].items():
+        print(f"  {name}: shortfall={b['shortfall']}")
     return 0
 
 
@@ -427,6 +442,11 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--threshold", type=float, default=0.9)
     p.add_argument("--min-rows", type=int, default=50)
     p.set_defaults(func=cmd_shortcut)
+
+    p = sub.add_parser("mix", help="assemble train/dev/calibration splits from a recipe")
+    p.add_argument("--recipe", required=True)
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_mix)
 
     p = sub.add_parser("gen-rules", help="generate rule-based contrastive clusters")
     p.add_argument("--family", required=True, choices=sorted(RULE_GENERATORS))
