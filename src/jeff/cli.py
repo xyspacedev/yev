@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 from collections import defaultdict
@@ -22,6 +23,7 @@ from jeff.filters.contamination import (
 )
 from jeff.filters.pipeline import assert_clean, run_filters
 from jeff.generators import actions, returns, severity
+from jeff.generators.common import EDIT_TYPES
 from jeff.generators.llm.attrib import prepare_pairs, render_attrib_prompt, score_attribution
 from jeff.generators.llm.check import prepare_sheets, render_checker_prompt, score_answers
 from jeff.generators.llm.ingest import ingest_file
@@ -157,8 +159,22 @@ def _clear(run: Path, *rels: str) -> None:
 
 
 def _coverage(key: dict, answers: list[dict], field: str) -> tuple[int, int]:
+    """Count items with a usable answer: a letter that maps to an option, or a known edit type."""
     expected = {k for k in key if k != "_no_base"}
-    got = {str(a.get(field, "")) for a in answers} & expected
+    got: set[str] = set()
+    for a in answers:
+        if not isinstance(a, dict):
+            continue
+        item = str(a.get(field, ""))
+        if item not in expected:
+            continue
+        if field == "item_id":
+            m = re.search(r"\b([A-F])\b", str(a.get("letter", "")).upper())
+            valid = bool(m) and m.group(1) in key[item].get("letters", {})
+        else:
+            valid = str(a.get("edit_type", "")).strip().lower() in EDIT_TYPES
+        if valid:
+            got.add(item)
     return len(got), len(expected)
 
 
@@ -187,7 +203,7 @@ def _dump_items(path: Path, items: list[dict]) -> None:
 
 def cmd_synth_plan(args) -> int:
     run = Path(args.dir)
-    _clear(run, "batches")
+    _clear(run, "batches", "ingested.jsonl", "checked.jsonl", "check", "attrib", "private", "final", "reports")
     planned = plan_batches(args.clusters, args.per_batch, args.seed)
     (run / "written").mkdir(parents=True, exist_ok=True)
     live = {b["batch_id"] for b in planned}
@@ -262,6 +278,7 @@ def cmd_synth_check_score(args) -> int:
     stats["answered"], stats["expected"] = n, m
     if n < m:
         print(f"WARNING: only {n} of {m} check items answered")
+    _clear(run, "attrib", "private/attrib-key.json", "final", "reports/attrib.json", "reports/pilot.json")
     write_jsonl(run / "checked.jsonl", kept)
     _write_json(run / "reports" / "check.json", dict(stats))
     print(json.dumps(dict(stats)))
@@ -300,6 +317,13 @@ def cmd_synth_attrib_score(args) -> int:
         print("error: no answers found")
         return 2
     checked = list(read_jsonl(run / "checked.jsonl"))
+    keyed = {v["decision"] for k, v in key.items() if k != "_no_base"}
+    has_base = {d.cluster_id for d in checked if d.edit_type is None}
+    stale = [d.id for d in checked if d.edit_type is not None and d.cluster_id in has_base and d.id not in keyed]
+    if stale:
+        print(f"error: attribution key is stale ({len(stale)} checked rows missing, e.g. {stale[0]}); "
+              "run synth attrib-prepare again")
+        return 2
     kept, stats = score_attribution(checked, key, answers)
     stats["bad_answer_line"] = bad
     stats["answered"], stats["expected"] = n, m
@@ -308,22 +332,41 @@ def cmd_synth_attrib_score(args) -> int:
     write_jsonl(run / "final" / "synthetic_opus.jsonl", kept)
     _write_json(run / "reports" / "attrib.json", dict(stats))
     ingest = json.loads((run / "reports" / "ingest.json").read_text())
-    planned = sum(json.loads(p.read_text())["n_clusters"] for p in (run / "batches").glob("*.json"))
-    clusters_by_family: Counter = Counter()
-    seen: set[str] = set()
-    for d in kept:
-        if d.cluster_id not in seen:
-            seen.add(d.cluster_id)
-            clusters_by_family[d.family] += 1
+    specs = [json.loads(p.read_text()) for p in (run / "batches").glob("*.json")]
+    planned = sum(b["n_clusters"] for b in specs)
+    ingested = list(read_jsonl(run / "ingested.jsonl")) if (run / "ingested.jsonl").exists() else []
+
+    def cluster_counts(rows) -> Counter:
+        seen_c: dict[str, str] = {}
+        for d in rows:
+            seen_c.setdefault(d.cluster_id, d.family)
+        return Counter(seen_c.values())
+
+    planned_by_family: Counter = Counter()
+    for b in specs:
+        planned_by_family[b["family"]] += b["n_clusters"]
+    ing_c, chk_c, fin_c = cluster_counts(ingested), cluster_counts(checked), cluster_counts(kept)
+    families = sorted(set(planned_by_family) | set(ing_c) | set(chk_c) | set(fin_c))
+    survival_by_family = {f: {"planned": planned_by_family[f], "ingested_clusters": ing_c[f],
+                              "checked_clusters": chk_c[f], "final_clusters": fin_c[f]} for f in families}
+    by_edit = {name: Counter(d.edit_type or "base" for d in rows)
+               for name, rows in (("ingested", ingested), ("checked", checked), ("final", kept))}
+    edit_types = sorted(set().union(*by_edit.values()))
+    survival_by_edit_type = {e: {name: by_edit[name][e] for name in by_edit} for e in edit_types}
+    clusters_by_family = fin_c
+    seen = {d.cluster_id for d in kept}
     pilot = {
         "planned_clusters": planned,
         "ingested_clusters": ingest.get("clusters_kept", 0),
         "ingested_rows": ingest.get("rows", 0),
+        "checked_clusters": len({d.cluster_id for d in checked}),
         "checked_rows": len(checked),
         "final_rows": len(kept),
         "final_clusters": len(seen),
         "final_clusters_by_family": dict(clusters_by_family),
         "final_rows_by_edit_type": dict(Counter(d.edit_type or "base" for d in kept)),
+        "survival_by_family": survival_by_family,
+        "survival_by_edit_type": survival_by_edit_type,
         "soft_label_share": round(sum(d.soft_gold is not None for d in kept) / max(len(kept), 1), 4),
     }
     _write_json(run / "reports" / "pilot.json", pilot)
@@ -354,7 +397,8 @@ def make_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("gen-rules", help="generate rule-based contrastive clusters")
     p.add_argument("--family", required=True, choices=sorted(RULE_GENERATORS))
     p.add_argument("--clusters", type=int, required=True)
-    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--seed", type=int, default=0,
+                   help="ids are '<family>:<seed>:<k>'; use a different seed for every run that gets merged")
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_gen_rules)
     synth = sub.add_parser("synth", help="Opus-subagent synthetic cluster pipeline")
