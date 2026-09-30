@@ -1125,7 +1125,7 @@ The controller executes this. Implementer subagents never run it. Every output g
 
 ```bash
 uv run python -m jeff gen-rules --family returns  --clusters 1000 --seed 201 --out data/synthetic/rules-s0/returns.jsonl
-uv run python -m jeff gen-rules --family actions  --clusters 1000 --seed 202 --out data/synthetic/rules-s0/actions.jsonl
+uv run python -m jeff gen-rules --family actions  --clusters 1700 --seed 202 --out data/synthetic/rules-s0/actions.jsonl
 uv run python -m jeff gen-rules --family severity --clusters 1000 --seed 203 --out data/synthetic/rules-s0/severity.jsonl
 ```
 
