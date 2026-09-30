@@ -3,21 +3,132 @@
   "seed": 0,
   "examples_rate": 0.35,
   "blocks": [
-    {"name": "evidence_vitaminc", "files": ["data/stage0-pool/vitaminc.jsonl"], "rows": 2500},
-    {"name": "evidence_wanli", "files": ["data/stage0-pool/wanli.jsonl"], "rows": 1000},
-    {"name": "evidence_mnli_snli_neg", "files": ["data/stage0-pool/multi_nli.jsonl", "data/stage0-pool/snli_cf.jsonl", "data/stage0-pool/negation.jsonl"], "rows": 1500},
-    {"name": "moderation_dynabench", "files": ["data/stage0-pool/dynabench.jsonl"], "rows": 2500},
-    {"name": "moderation_aegis_civil", "files": ["data/stage0-pool/aegis.jsonl", "data/stage0-pool/civil_comments.jsonl"], "rows": 1500},
-    {"name": "action_review", "files": ["data/stage0-pool/agent_actions.jsonl"], "rows": 2500},
-    {"name": "rules", "files": ["data/stage0-pool/eikos.jsonl", "data/stage0-pool/ruletaker.jsonl"], "rows": 2500},
-    {"name": "intent", "files": ["data/stage0-pool/banking77.jsonl", "data/stage0-pool/clinc150.jsonl"], "rows": 2000},
-    {"name": "fast_decisions", "files": ["data/stage0-pool/fastdec_*.jsonl"], "rows": 1500},
-    {"name": "triage", "files": ["data/stage0-pool/cvss.jsonl", "data/stage0-pool/it_support.jsonl", "data/stage0-pool/help_desk.jsonl"], "rows": 1000},
-    {"name": "sentiment", "files": ["data/stage0-pool/go_emotions.jsonl"], "rows": 500},
-    {"name": "replay", "files": ["data/stage0-pool/boolq.jsonl", "data/stage0-pool/arc_challenge.jsonl", "data/stage0-pool/arc_easy.jsonl", "data/stage0-pool/csqa.jsonl"], "rows": 1000},
-    {"name": "synthetic_rules", "files": ["data/stage0-pool/synthetic_rules.jsonl"], "rows": 10000, "dev_share": 0.05},
-    {"name": "synthetic_opus", "files": ["data/stage0-pool/synthetic_opus.jsonl"], "rows": 10000, "dev_share": 0.05}
+    {
+      "name": "evidence_vitaminc",
+      "files": [
+        "data/stage0-pool/vitaminc.jsonl"
+      ],
+      "rows": 2500
+    },
+    {
+      "name": "evidence_wanli",
+      "files": [
+        "data/stage0-pool/wanli.jsonl"
+      ],
+      "rows": 1000
+    },
+    {
+      "name": "evidence_mnli_snli_neg",
+      "files": [
+        "data/stage0-pool/multi_nli.jsonl",
+        "data/stage0-pool/snli_cf.jsonl",
+        "data/stage0-pool/negation.jsonl"
+      ],
+      "rows": 1500
+    },
+    {
+      "name": "moderation_dynabench",
+      "files": [
+        "data/stage0-pool/dynabench.jsonl"
+      ],
+      "rows": 2500
+    },
+    {
+      "name": "moderation_aegis_civil",
+      "files": [
+        "data/stage0-pool/aegis.jsonl",
+        "data/stage0-pool/civil_comments.jsonl"
+      ],
+      "rows": 1500
+    },
+    {
+      "name": "action_review",
+      "files": [
+        "data/stage0-pool/agent_actions.jsonl"
+      ],
+      "rows": 2500
+    },
+    {
+      "name": "rules",
+      "files": [
+        "data/stage0-pool/eikos.jsonl",
+        "data/stage0-pool/ruletaker.jsonl"
+      ],
+      "rows": 2500
+    },
+    {
+      "name": "intent",
+      "files": [
+        "data/stage0-pool/banking77.jsonl",
+        "data/stage0-pool/clinc150.jsonl"
+      ],
+      "rows": 2000
+    },
+    {
+      "name": "fast_decisions",
+      "files": [
+        "data/stage0-pool/fastdec_*.jsonl"
+      ],
+      "rows": 1500
+    },
+    {
+      "name": "triage",
+      "files": [
+        "data/stage0-pool/cvss.jsonl",
+        "data/stage0-pool/it_support.jsonl",
+        "data/stage0-pool/help_desk.jsonl"
+      ],
+      "rows": 1000
+    },
+    {
+      "name": "sentiment",
+      "files": [
+        "data/stage0-pool/go_emotions.jsonl"
+      ],
+      "rows": 500
+    },
+    {
+      "name": "replay",
+      "files": [
+        "data/stage0-pool/boolq.jsonl",
+        "data/stage0-pool/arc_challenge.jsonl",
+        "data/stage0-pool/arc_easy.jsonl",
+        "data/stage0-pool/csqa.jsonl"
+      ],
+      "rows": 1000
+    },
+    {
+      "name": "skill_atlas",
+      "files": [
+        "data/stage0-pool/skill_atlas.jsonl"
+      ],
+      "rows": 5000,
+      "dev_share": 0.05
+    },
+    {
+      "name": "synthetic_rules",
+      "files": [
+        "data/stage0-pool/synthetic_rules.jsonl"
+      ],
+      "rows": 10000,
+      "dev_share": 0.05
+    },
+    {
+      "name": "synthetic_opus",
+      "files": [
+        "data/stage0-pool/synthetic_opus.jsonl"
+      ],
+      "rows": 10000,
+      "dev_share": 0.05
+    }
   ],
-  "dev_files": ["data/dev/decidebench_examples.jsonl"],
-  "calibration": {"files": ["data/public/natural_filtered/*.jsonl"], "rows": 2000}
+  "dev_files": [
+    "data/dev/decidebench_examples.jsonl"
+  ],
+  "calibration": {
+    "files": [
+      "data/public/natural_filtered/*.jsonl"
+    ],
+    "rows": 2000
+  }
 }
