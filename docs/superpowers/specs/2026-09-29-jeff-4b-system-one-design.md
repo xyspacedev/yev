@@ -34,6 +34,7 @@ with no generated text, calibrated probabilities, and TypeSafe's `/v1/systemone`
    WildGuardTest, JevBench, and every public test/validation split.
 5. **Test set is run once**, at the end. All tuning uses the dev set.
 6. **Exception to rule 4, added 2026-09-29 at the user's request:** `fastino/fast-decisions` is trained on. It publishes only its development split, and Fastino holds the test split privately, so this doesn't contaminate their benchmark. The cost is that fast-decisions can no longer serve as an independent out-of-domain check for jeff-4b.
+7. **Model-generated datasets are allowed when their licence is permissive** (user decision, 2026-09-29). This matches the decision to use our own Opus-generated data. As a result, karanxa agent-action-safety (Apache-2.0, written by Gemini) and DynaBench train (MIT, written by GPT-4o) are included, and rule 3's exclusion of karanxa is lifted. Datasets excluded for non-commercial *licences* stay excluded, including derivatives such as DynaBenchSafetyMix and GuardReasonerTrain.
 
 ## 3. Architecture
 
