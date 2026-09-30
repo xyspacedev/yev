@@ -71,3 +71,12 @@ def test_policy_edit_changes_only_options_by_a_small_amount():
 def test_base_states_are_diverse():
     bases = [m[0].state for m in by_cluster(generate(200, seed=1)).values()]
     assert len(set(bases)) >= 190
+
+
+def test_day_count_shifts_are_tagged_date_not_threshold():
+    seen = 0
+    for members in by_cluster(generate(100, seed=6)).values():
+        for d in members[1:]:
+            assert d.edit_type != "threshold"
+            seen += d.edit_type == "date"
+    assert seen > 0

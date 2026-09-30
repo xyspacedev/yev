@@ -94,8 +94,10 @@ def spread_into_parts(items: list, cluster_of: list[str], part_size: int, rng) -
         groups[c].append(item)
     n_parts = max(math.ceil(len(items) / part_size), max((len(g) for g in groups.values()), default=1), 1)
     parts: list[list] = [[] for _ in range(n_parts)]
+    cursor = 0
     for c in sorted(groups):
-        offset = rng.randrange(n_parts)
+        offset = cursor
+        cursor += len(groups[c])
         for j, item in enumerate(groups[c]):
             parts[(offset + j) % n_parts].append(item)
     for part in parts:

@@ -74,9 +74,9 @@ def generate_cluster(rng: random.Random, cluster_id: str) -> list[Decision]:
     template = rng.randrange(2)
     on_refund_edge = rng.random() < 0.6
     base = ReturnCase(days=p.window if on_refund_edge else p.window + p.grace, opened=False, final_sale=False)
-    required = (replace(base, days=base.days + 1), "threshold")
+    required = (replace(base, days=base.days + 1), "date")
     optional = [
-        (replace(base, days=base.days - 1), "threshold"),
+        (replace(base, days=base.days - 1), "date"),
         (replace(base, opened=True), "negation"),
         (replace(base, final_sale=True), "exception"),
     ]
