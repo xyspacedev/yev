@@ -9,6 +9,7 @@ from jeff.filters.contamination import EmbeddingFilter, Fingerprints, has_canary
 from jeff.filters.dedupe import dedupe_key
 from jeff.schema import Decision
 from jeff.sources.base import SourceSpec
+from jeff.sources.registry import LOCAL_SOURCES
 
 REASON_ORDER = ("licence", "dev_split", "canary", "ngram", "embedding")
 REPORT_KEYS = ("in", "licence", "dev_split", "canary", "ngram", "embedding", "duplicate", "out")
@@ -19,6 +20,9 @@ class ContaminationError(RuntimeError):
 
 
 def _licence_ok(d: Decision, specs: dict[str, SourceSpec], cache: dict[str, bool]) -> bool:
+    if d.source in LOCAL_SOURCES:
+        # Local sources carry a licence per row (e.g. each skill's repo licence), not one per spec.
+        return licences.is_allowed(d.licence)
     spec = specs.get(d.source)
     if spec is None or d.source == "decidebench" or d.licence != spec.licence:
         return False

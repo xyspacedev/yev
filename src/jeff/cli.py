@@ -135,10 +135,14 @@ def cmd_filter(args: argparse.Namespace) -> int:
     for d in kept:
         by_source[d.source].append(d)
     out.mkdir(parents=True, exist_ok=True)
-    for stale in [*out.glob("*.jsonl"), *out.glob("*.jsonl.tmp")]:
-        stale.unlink()
+    for stale in [*out.glob("*.jsonl"), *out.glob("*.jsonl.tmp"), out / skill_atlas.ATTRIBUTION_FILE]:
+        if stale.exists():
+            stale.unlink()
     for source, rows in by_source.items():
         write_jsonl(out / f"{source}.jsonl", rows)
+    attribution = skill_atlas.attribution_rows({"kept": by_source.get(skill_atlas.NAME, [])})
+    if attribution:
+        skill_atlas.write_attribution(out, attribution)
     report = {
         "meta": {
             "embedding": None if args.no_embed else EMBED_MODEL,
@@ -182,10 +186,14 @@ def cmd_shortcut(args: argparse.Namespace) -> int:
     for d in kept:
         by_source[d.source].append(d)
     out.mkdir(parents=True, exist_ok=True)
-    for stale in [*out.glob("*.jsonl"), *out.glob("*.jsonl.tmp")]:
-        stale.unlink()
+    for stale in [*out.glob("*.jsonl"), *out.glob("*.jsonl.tmp"), out / skill_atlas.ATTRIBUTION_FILE]:
+        if stale.exists():
+            stale.unlink()
     for source, rows in by_source.items():
         write_jsonl(out / f"{source}.jsonl", rows)
+    attribution = skill_atlas.attribution_rows({"kept": by_source.get(skill_atlas.NAME, [])})
+    if attribution:
+        skill_atlas.write_attribution(out, attribution)
     _write_stats_atomically(out / "shortcut_report.json", report)
     print(json.dumps(report, indent=2))
     return 0

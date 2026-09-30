@@ -503,8 +503,20 @@ def attribution_rows(families: dict[str, list[Decision]]) -> list[dict]:
     return [seen[k] for k in sorted(seen)]
 
 
+ATTRIBUTION_FILE = "ATTRIBUTION.json"
+
+
+def write_attribution(out: Path | str, rows: list[dict]) -> Path:
+    """Write the attribution rows as one JSON array (not *.jsonl, so Decision globs never read it)."""
+    path = Path(out) / ATTRIBUTION_FILE
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(rows, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
 def run(out: Path | str, root: Path | str = DEFAULT_ROOT, seed: int = 0) -> dict:
-    """Write one JSONL per family plus ATTRIBUTION.jsonl into `out`; return stats (empty when skipped)."""
+    """Write one JSONL per family plus ATTRIBUTION.json into `out`; return stats (empty when skipped)."""
     built = build_all(root, seed)
     if built is None:
         return {"skipped": True, "reason": f"no skill-atlas checkout at {root}"}
@@ -514,10 +526,6 @@ def run(out: Path | str, root: Path | str = DEFAULT_ROOT, seed: int = 0) -> dict
     for name, decisions in families.items():
         stats[name]["written"] = write_jsonl(out / f"{name}.jsonl", decisions)
     rows = attribution_rows(families)
-    tmp = out / "ATTRIBUTION.jsonl.tmp"
-    with tmp.open("w", encoding="utf-8") as f:
-        for r in rows:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    tmp.replace(out / "ATTRIBUTION.jsonl")
+    write_attribution(out, rows)
     stats["attribution_skills"] = len(rows)
     return stats

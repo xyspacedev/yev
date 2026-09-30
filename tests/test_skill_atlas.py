@@ -173,7 +173,8 @@ def test_filing_options(tmp_path):
 
 def test_attribution_file(tmp_path):
     fams, stats, out = build(tmp_path)
-    rows = [json.loads(line) for line in (out / "ATTRIBUTION.jsonl").read_text().splitlines()]
+    rows = json.loads((out / "ATTRIBUTION.json").read_text())
+    assert not list(out.glob("ATTRIBUTION*.jsonl"))
     used = set().union(*(ids_in(d) for ds in fams.values() for d in ds))
     assert {r["skill_id"] for r in rows} == used and len(rows) == len(used)
     for r in rows:
@@ -184,7 +185,7 @@ def test_attribution_file(tmp_path):
 def test_deterministic(tmp_path):
     build(tmp_path, name="one")
     build(tmp_path, name="two")
-    for f in ("skill_scope.jsonl", "skill_judge.jsonl", "skill_filing.jsonl", "ATTRIBUTION.jsonl"):
+    for f in ("skill_scope.jsonl", "skill_judge.jsonl", "skill_filing.jsonl", "ATTRIBUTION.json"):
         assert (tmp_path / "one" / f).read_text() == (tmp_path / "two" / f).read_text()
 
 
@@ -201,7 +202,7 @@ def test_cli_only_skill_atlas(tmp_path, monkeypatch):
     rc = cli.main(["build-public", "--out", str(tmp_path / "o"), "--only", "skill_atlas",
                    "--skill-atlas-root", str(root)])
     assert rc == 0
-    assert (tmp_path / "o" / "skill_judge.jsonl").exists() and (tmp_path / "o" / "ATTRIBUTION.jsonl").exists()
+    assert (tmp_path / "o" / "skill_judge.jsonl").exists() and (tmp_path / "o" / "ATTRIBUTION.json").exists()
     stats = json.loads((tmp_path / "o" / "build_stats.json").read_text())
     assert stats["skill_atlas"]["skill_judge"]["written"] == 3
 
@@ -220,3 +221,48 @@ def test_scope_capped_per_gold(tmp_path, monkeypatch):
     assert stats["skill_scope"]["other_reasons"] == {"capped_internal": 1}
     fams2, _, _ = build(tmp_path, name="again")
     assert [d.id for d in fams2["skill_scope"]] == [d.id for d in fams["skill_scope"]]
+
+
+def test_build_then_filter_end_to_end(tmp_path, monkeypatch):
+    from jeff.filters.contamination import build_fingerprints
+
+    root = make_atlas(tmp_path / "atlas")
+    raw, filtered = tmp_path / "raw", tmp_path / "filtered"
+    monkeypatch.setattr(cli, "SOURCES", [])
+    monkeypatch.setattr(cli, "load_fingerprints", lambda: build_fingerprints([]))
+    assert cli.main(["build-public", "--out", str(raw), "--only", "skill_atlas", "--skill-atlas-root", str(root)]) == 0
+    assert cli.main(["filter", "--in", str(raw), "--out", str(filtered), "--no-embed"]) == 0
+    kept = list(read_jsonl(filtered / "skill_atlas.jsonl"))
+    raw_n = sum(1 for f in raw.glob("*.jsonl") for _ in read_jsonl(f))
+    assert kept and len(kept) == raw_n
+    report = json.loads((filtered / "filter_report.json").read_text())
+    assert report["sources"]["skill_atlas"]["licence"] == 0
+    attribution = json.loads((filtered / "ATTRIBUTION.json").read_text())
+    kept_ids = set().union(*(ids_in(d) for d in kept))
+    assert {r["skill_id"] for r in attribution} == kept_ids
+
+
+def test_filter_writes_no_attribution_without_skill_atlas_rows(tmp_path, monkeypatch):
+    from jeff.filters.contamination import build_fingerprints
+    from jeff.schema import Decision, Option, write_jsonl as wj
+    from jeff.sources.base import SourceSpec
+
+    raw, out = tmp_path / "raw", tmp_path / "out"
+    wj(raw / "toy.jsonl", [Decision(id="toy:1", type="noul", state="s", question="q?",
+                                    options=[Option("yes", "y"), Option("no", "n")], gold="yes",
+                                    family="f", source="toy", licence="mit")])
+    toy = SourceSpec(name="toy", hf_id="toy/toy", config=None, split="train", licence="mit",
+                     convert=lambda *a: [], pool_size=1)
+    monkeypatch.setattr(cli, "SOURCES", [toy])
+    monkeypatch.setattr(cli, "load_fingerprints", lambda: build_fingerprints([]))
+    assert cli.main(["filter", "--in", str(raw), "--out", str(out), "--no-embed"]) == 0
+    assert not (out / "ATTRIBUTION.json").exists()
+
+
+def test_local_source_licence_check_is_per_row(tmp_path):
+    from jeff.filters.pipeline import _licence_ok
+    from jeff.mix import is_allowed
+
+    fams, _ = sa.build_all(make_atlas(tmp_path / "atlas"))
+    for d in (d for ds in fams.values() for d in ds):
+        assert _licence_ok(d, {}, {}) and is_allowed(d.licence)
