@@ -413,11 +413,11 @@ def make_parser() -> argparse.ArgumentParser:
         p.set_defaults(func=func)
         if name == "plan":
             p.add_argument("--clusters", type=int, required=True)
-            p.add_argument("--per-batch", type=int, default=10)
+            p.add_argument("--per-batch", type=int, default=25)
         if name == "check-prepare":
             p.add_argument("--sheets", type=int, default=3)
         if name in ("check-prepare", "attrib-prepare"):
-            p.add_argument("--part-size", type=int, default=100)
+            p.add_argument("--part-size", type=int, default=250)
     return parser
 
 

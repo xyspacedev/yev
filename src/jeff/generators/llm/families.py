@@ -12,7 +12,7 @@ FAMILIES: dict[str, tuple[str, str, bool]] = {
     "claim_evidence": ("choice", "A claim and a short evidence passage: the evidence supports it, contradicts it, or does not settle it.", False),
     "routing": ("choice", "An assistant must pick which tool or team should handle a request; one option is 'none of these fits'.", False),
     "intent": ("choice", "A customer message and a set of possible intents; one option is 'none of these'.", False),
-    "sentiment": ("score", "A review of a product or service, rated on an ordered five-point scale from very negative to very positive.", False),
+    "sentiment": ("score", "A customer review written naturally, with no rules or checklists. The options are tone levels from very negative to very positive, and the rating follows the reviewer's overall tone.", False),
     "severity": ("score", "A bug report or incident, rated on an ordered four-point severity scale.", False),
 }
 

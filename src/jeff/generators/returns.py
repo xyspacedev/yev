@@ -63,7 +63,7 @@ def render_state(template: int, shop: str, product: str, delivered: date, c: Ret
         return (f"{shop} order: {product}. Delivered {_fmt(delivered)}. Return requested {_fmt(requested)}, "
                 f"{c.days} days after delivery. The item is {condition}. {sale}")
     return (f"Return request at {shop} for a {product}, {condition}. {sale} It arrived on {_fmt(delivered)} and the "
-            f"customer asked to send it back on {_fmt(requested)} ({c.days} days after delivery).")
+            f"return was logged on {_fmt(requested)} ({c.days} days after delivery).")
 
 
 def generate_cluster(rng: random.Random, cluster_id: str) -> list[Decision]:
