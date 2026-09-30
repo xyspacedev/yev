@@ -60,5 +60,36 @@ def test_policy_edit_changes_only_options_by_a_small_amount():
 
 
 def test_base_states_are_diverse():
-    bases = [m[0].state for m in _clusters(generate(200, seed=1)).values()]
-    assert len(set(bases)) >= 190
+    for seed in range(10):
+        bases = [m[0].state for m in _clusters(generate(200, seed=seed)).values()]
+        assert len(set(bases)) >= 195, seed
+
+
+def test_message_variants_within_edit_bound_exhaustively():
+    from dataclasses import replace
+    from itertools import product
+
+    from jeff.generators import actions as A
+
+    base = ActionCase("message")
+    variants = [replace(base, external=True), replace(base, external=True, sensitive=True),
+                replace(base, sensitive=True)]
+    for msg in product(A.INTERNAL_RECIPIENTS, A.EXTERNAL_RECIPIENTS, A.SAFE_CONTENTS, A.SENSITIVE_CONTENTS):
+        b = A.render_state("ops-bot", "", base, 1234, 0, msg, 12345)
+        for v in variants:
+            assert token_edit_size(b, A.render_state("ops-bot", "", v, 1234, 0, msg, 12345)) <= 15, msg
+
+
+def test_data_variants_within_edit_bound_exhaustively():
+    from dataclasses import replace
+
+    from jeff.generators import actions as A
+
+    base = ActionCase("data", env="production", op="update")
+    variants = [replace(base, env="staging"), replace(base, op="read"), replace(base, op="delete"),
+                replace(base, op="delete", ticket=True)]
+    for phrase in range(4):
+        for target in A.TABLES:
+            b = A.render_state("ops-bot", target, base, 1234, phrase, ref=12345)
+            for v in variants:
+                assert token_edit_size(b, A.render_state("ops-bot", target, v, 1234, phrase, ref=12345)) <= 15
