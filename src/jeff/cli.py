@@ -433,6 +433,46 @@ def cmd_synth_attrib_score(args) -> int:
     return 0
 
 
+def _letter_logits_for(args) -> tuple[list[dict], list[list[float]]]:
+    from jeff.train import infer
+    from jeff.train.data import load_rows
+    rows = load_rows(args.data)
+    tok, model = infer.load(args.model, args.base)
+    return rows, infer.letter_logits(model, tok, rows, max_len=args.max_len, batch_tokens=args.batch_tokens)
+
+
+def cmd_train(args) -> int:
+    from jeff.train.trainer import TrainConfig, train
+    print(json.dumps(train(TrainConfig.from_json(args.config)), indent=2))
+    return 0
+
+
+def cmd_eval(args) -> int:
+    from jeff.train import metrics, readout
+    temps = json.loads(Path(args.calibration).read_text())["temperatures"] if args.calibration else {}
+    rows, logits = _letter_logits_for(args)
+    preds = [{**{k: r.get(k) for k in ("id", "type", "family", "edit_type", "source", "cluster_id", "letters", "answer")},
+              "probs": readout.probs(z, n=len(r["letters"]), temperature=temps.get(r["type"], 1.0))}
+             for r, z in zip(rows, logits)]
+    report = metrics.evaluate(preds)
+    _write_json(Path(args.out), report)
+    print(json.dumps(report, indent=2))
+    return 0
+
+
+def cmd_calibrate(args) -> int:
+    from jeff.format import LETTERS
+    from jeff.train.calibrate import fit_temperatures, write_calibration
+    rows, logits = _letter_logits_for(args)
+    items = [{"type": r["type"], "logits": z, "n": len(r["letters"]), "answer_index": LETTERS.index(r["answer"])}
+             for r, z in zip(rows, logits)]
+    temps = fit_temperatures(items)
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    write_calibration(args.out, temps, {"model": args.model, "data": args.data, "n": len(items)})
+    print(json.dumps(temps))
+    return 0
+
+
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jeff")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -493,6 +533,22 @@ def make_parser() -> argparse.ArgumentParser:
             p.add_argument("--sheets", type=int, default=3)
         if name in ("check-prepare", "attrib-prepare"):
             p.add_argument("--part-size", type=int, default=250)
+
+    p = sub.add_parser("train", help="Stage 0 LoRA training from a JSON config")
+    p.add_argument("--config", required=True)
+    p.set_defaults(func=cmd_train)
+    for name, func, hlp in [("eval", cmd_eval, "dev metrics for a trained model"),
+                            ("calibrate", cmd_calibrate, "fit per-type temperatures")]:
+        p = sub.add_parser(name, help=hlp)
+        p.add_argument("--model", required=True, help="LoRA adapter dir or full model dir")
+        p.add_argument("--base", help="base model path (required for adapters; tokenizer source)")
+        p.add_argument("--data", required=True, help="*.chat.jsonl rows")
+        p.add_argument("--out", required=True)
+        p.add_argument("--max-len", type=int, default=4096)
+        p.add_argument("--batch-tokens", type=int, default=16384)
+        if name == "eval":
+            p.add_argument("--calibration", help="calibration JSON from jeff calibrate (default T=1)")
+        p.set_defaults(func=func)
     return parser
 
 

@@ -1,0 +1,11 @@
+{
+  "name": "ab_both",
+  "model_path": "/home/ubuntu/models/Qwen3.5-4B-Base",
+  "train_path": "/home/ubuntu/jeff/data/mix/stage0/train.chat.jsonl",
+  "out_dir": "/home/ubuntu/runs/ab_both",
+  "fraction": 1.0,
+  "lambda_pair": 0.5,
+  "lambda_perm": 0.2,
+  "twin_rate": 0.5,
+  "lambda_rps": 0.5
+}

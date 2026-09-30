@@ -1,0 +1,11 @@
+{
+  "name": "lc25",
+  "model_path": "/home/ubuntu/models/Qwen3.5-4B-Base",
+  "train_path": "/home/ubuntu/jeff/data/mix/stage0/train.chat.jsonl",
+  "out_dir": "/home/ubuntu/runs/lc25",
+  "fraction": 0.25,
+  "lambda_pair": 0,
+  "lambda_perm": 0,
+  "twin_rate": 0,
+  "lambda_rps": 0.5
+}
