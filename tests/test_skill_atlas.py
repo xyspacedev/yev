@@ -17,7 +17,9 @@ LEAVES = {  # dept -> team -> leaves
 SKILLS = {
     "mit1": ("MIT", []), "mit2": ("MIT", []), "apache1": ("Apache-2.0", []), "apache2": ("Apache-2.0", []),
     "bsd1": ("BSD-3-Clause", []), "gpl1": ("GPL-3.0", []), "none1": (None, []), "noassert1": ("NOASSERTION", []),
-    "flaggedherd": ("MIT", ["variant"]), "flaggedfile": ("MIT", []),
+    "flaggedherd": ("MIT", ["prompt-injection"]), "flaggedfile": ("MIT", []),
+    "examplepath": ("MIT", ["example-path"]),
+    "softflag": ("MIT", ["internal", "likely-vendor", "variant", "no-license", "stale"]),
     "mit3": ("MIT", []), "mit4": ("MIT", []), "mit5": ("MIT", []), "mit6": ("MIT", []), "tiny1": ("MIT", []),
 }
 
@@ -61,6 +63,8 @@ def make_atlas(root: Path) -> Path:
         {"n": 5, "skill_id": sid("flaggedfile"), "scope": "portable"},
         {"n": 6, "skill_id": sid("none1"), "scope": "portable"},
         {"n": 7, "skill_id": sid("bsd1"), "scope": "portable"},
+        {"n": 8, "skill_id": sid("examplepath"), "scope": "portable"},
+        {"n": 9, "skill_id": sid("softflag"), "scope": "internal"},
     ])
     write_jsonl(out / "scope" / "scope-fill-000.jsonl", [{"n": 1, "skill_id": sid("mit2"), "scope": "private"}])
     # judge: one group with many large gaps, plus a group judged only by judge4 (Sonnet)
@@ -110,13 +114,14 @@ def ids_in(d):
 def test_licence_and_flag_filters(tmp_path):
     fams, stats, _ = build(tmp_path)
     used = set().union(*(ids_in(d) for ds in fams.values() for d in ds))
-    for bad in ("gpl1", "none1", "noassert1", "bsd1", "flaggedherd", "flaggedfile"):
+    for bad in ("gpl1", "none1", "noassert1", "bsd1", "flaggedherd", "flaggedfile", "examplepath"):
         assert sid(bad) not in used, bad
     scope = {d.metadata["skill_id"]: d for d in fams["skill_scope"]}
-    assert set(scope) == {sid("mit1"), sid("apache1"), sid("mit2")}
+    assert set(scope) == {sid("mit1"), sid("apache1"), sid("mit2"), sid("softflag")}
+    assert scope[sid("softflag")].gold == "internal"  # soft herd flags do not drop
     assert scope[sid("mit2")].gold == "internal"  # alias "private" normalised
     assert scope[sid("apache1")].licence == "apache-2.0" and scope[sid("apache1")].metadata["licence"] == "Apache-2.0"
-    assert stats["skill_scope"]["dropped_flags"] == 2 and stats["skill_scope"]["dropped_licence"] == 3
+    assert stats["skill_scope"]["dropped_flags"] == 3 and stats["skill_scope"]["dropped_licence"] == 3
     for ds in fams.values():
         for d in ds:
             assert d.source == "skill_atlas" and d.type == "choice"
@@ -199,3 +204,19 @@ def test_cli_only_skill_atlas(tmp_path, monkeypatch):
     assert (tmp_path / "o" / "skill_judge.jsonl").exists() and (tmp_path / "o" / "ATTRIBUTION.jsonl").exists()
     stats = json.loads((tmp_path / "o" / "build_stats.json").read_text())
     assert stats["skill_atlas"]["skill_judge"]["written"] == 3
+
+
+def test_flags_file_drops_even_without_herd_flags(tmp_path):
+    fams, _, _ = build(tmp_path)
+    used = set().union(*(ids_in(d) for ds in fams.values() for d in ds))
+    assert sid("flaggedfile") not in used and sid("softflag") in used
+
+
+def test_scope_capped_per_gold(tmp_path, monkeypatch):
+    monkeypatch.setattr(sa, "SCOPE_PER_GOLD_CAP", 1)
+    fams, stats, _ = build(tmp_path)
+    golds = [d.gold for d in fams["skill_scope"]]
+    assert sorted(golds) == ["internal", "portable", "vendor"]
+    assert stats["skill_scope"]["other_reasons"] == {"capped_internal": 1}
+    fams2, _, _ = build(tmp_path, name="again")
+    assert [d.id for d in fams2["skill_scope"]] == [d.id for d in fams["skill_scope"]]

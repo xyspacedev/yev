@@ -44,6 +44,14 @@ OPUS_LABEL_METHODS = frozenset({"fallback", "thin"})
 JUDGE_PREFIXES = ("judge", "judge7", "judge6", "judge5")
 EXCLUDED_JUDGE_PREFIXES = ("judge4",)
 
+# Herd flags that drop a skill: safety/injection flags, plus low-quality hard flags. Soft metadata
+# (`internal`, `likely-*`, `variant`, `no-license`, `stale`) does not; the licence rule covers
+# unlicensed repos. Any skill listed in flags.jsonl is always dropped.
+SAFETY_HERD_FLAGS = frozenset({"prompt-injection", "guardrail-bypass", "harmful-content", "credential-exposure"})
+QUALITY_HERD_FLAGS = frozenset({"example-path", "placeholder", "fixture", "benchmark", "no-description"})
+DROP_HERD_FLAGS = SAFETY_HERD_FLAGS | QUALITY_HERD_FLAGS
+
+SCOPE_PER_GOLD_CAP = 1500
 SCOPE_CAP = 4000
 FILING_CAP = 4000
 JUDGE_CAP = 2500
@@ -177,7 +185,8 @@ class Atlas:
         return None
 
     def is_flagged(self, sid: str) -> bool:
-        return sid in self.flagged or bool((self.herd.get(sid) or {}).get("flags"))
+        herd_flags = set((self.herd.get(sid) or {}).get("flags") or [])
+        return sid in self.flagged or bool(herd_flags & DROP_HERD_FLAGS)
 
     def screen(self, sid: str) -> str | None:
         """None if usable, else the drop reason ('flags' or 'licence')."""
@@ -269,6 +278,18 @@ def build_scope(atlas: Atlas, seed: int) -> tuple[list[Decision], Stats]:
                 "batch": v["file"]}
         out.append(_decision(f"scope:{sid}", render_skill(atlas.text(sid), SCOPE_CAP), SCOPE_QUESTION,
                              list(SCOPE_OPTIONS), v["scope"], "skill_scope", lic, meta))
+    by_gold: dict[str, list[Decision]] = defaultdict(list)
+    for d in out:
+        by_gold[d.gold].append(d)
+    capped = []
+    for gold in sorted(by_gold):
+        rows = by_gold[gold]
+        if len(rows) > SCOPE_PER_GOLD_CAP:
+            stats.reasons[f"capped_{gold}"] = len(rows) - SCOPE_PER_GOLD_CAP
+            stats.dropped_other += len(rows) - SCOPE_PER_GOLD_CAP
+            rows = _rng(seed, "scope_cap", gold).sample(rows, SCOPE_PER_GOLD_CAP)
+        capped.extend(rows)
+    out = sorted(capped, key=lambda d: d.id)
     stats.kept = len(out)
     return out, stats
 
