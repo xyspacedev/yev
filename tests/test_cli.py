@@ -73,6 +73,9 @@ def test_filter_command_writes_clean_files_and_report(tmp_path, monkeypatch):
     write_jsonl(raw / "toy.jsonl", [good, bad])
     (raw / "build_stats.json").write_text("{}")
     monkeypatch.setattr(cli, "load_fingerprints", lambda: build_fingerprints([]))
+    toy = SourceSpec(name="toy", hf_id="toy/toy", config=None, split="train", licence="mit",
+                     convert=toy_convert, pool_size=10)
+    monkeypatch.setattr(cli, "SOURCES", [toy])
     assert cli.main(["filter", "--in", str(raw), "--out", str(out), "--no-embed"]) == 0
     assert [d.id for d in read_jsonl(out / "toy.jsonl")] == ["toy:1"]
     report = json.loads((out / "filter_report.json").read_text())

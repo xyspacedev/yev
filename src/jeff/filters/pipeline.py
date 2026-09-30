@@ -8,7 +8,9 @@ from jeff import licences
 from jeff.filters.contamination import EmbeddingFilter, Fingerprints, has_canary, overlaps
 from jeff.filters.dedupe import dedupe_key
 from jeff.schema import Decision
+from jeff.sources.base import SourceSpec
 
+REASON_ORDER = ("licence", "dev_split", "canary", "ngram", "embedding")
 REPORT_KEYS = ("in", "licence", "dev_split", "canary", "ngram", "embedding", "duplicate", "out")
 
 
@@ -16,22 +18,49 @@ class ContaminationError(RuntimeError):
     """A row that should have been filtered reached the output."""
 
 
+def _licence_ok(d: Decision, specs: dict[str, SourceSpec], cache: dict[str, bool]) -> bool:
+    spec = specs.get(d.source)
+    if spec is None or d.source == "decidebench" or d.licence != spec.licence:
+        return False
+    if d.source not in cache:
+        try:
+            licences.check(spec.hf_id, spec.licence, config=spec.config, split=spec.split, data_files=spec.data_files)
+            cache[d.source] = True
+        except licences.LicenceError:
+            cache[d.source] = False
+    return cache[d.source]
+
+
 def run_filters(
-    decisions: list[Decision], fp: Fingerprints, embed: EmbeddingFilter | None, batch: int = 512
+    decisions: list[Decision],
+    fp: Fingerprints,
+    embed: EmbeddingFilter | None,
+    specs: dict[str, SourceSpec],
+    batch: int = 512,
 ) -> tuple[list[Decision], dict[str, dict[str, int]]]:
     counts: dict[str, Counter] = defaultdict(Counter)
     survivors: list[Decision] = []
+    licence_cache: dict[str, bool] = {}
+    # cluster_id -> the earliest stage (by REASON_ORDER) that dropped a member
+    dropped: dict[str, str] = {}
+
+    def drop(d: Decision, reason: str) -> None:
+        counts[d.source][reason] += 1
+        if d.cluster_id is not None:
+            prev = dropped.get(d.cluster_id)
+            if prev is None or REASON_ORDER.index(reason) < REASON_ORDER.index(prev):
+                dropped[d.cluster_id] = reason
+
     for d in decisions:
-        c = counts[d.source]
-        c["in"] += 1
-        if not licences.is_allowed(d.licence):
-            c["licence"] += 1
+        counts[d.source]["in"] += 1
+        if not _licence_ok(d, specs, licence_cache):
+            drop(d, "licence")
         elif d.split == "dev":
-            c["dev_split"] += 1
+            drop(d, "dev_split")
         elif has_canary(d):
-            c["canary"] += 1
+            drop(d, "canary")
         elif overlaps(d, fp):
-            c["ngram"] += 1
+            drop(d, "ngram")
         else:
             survivors.append(d)
 
@@ -42,30 +71,39 @@ def run_filters(
         kept_after_embed = []
         for d, bad in zip(survivors, flagged, strict=True):
             if bad:
-                counts[d.source]["embedding"] += 1
+                drop(d, "embedding")
             else:
                 kept_after_embed.append(d)
         survivors = kept_after_embed
 
-    seen: set[str] = set()
+    # Clusters stay whole: a cluster that lost a member to any filter loses all of them.
+    remaining: list[Decision] = []
+    for d in survivors:
+        if d.cluster_id is not None and d.cluster_id in dropped:
+            counts[d.source][dropped[d.cluster_id]] += 1
+        else:
+            remaining.append(d)
+    survivors = remaining
+
+    # Dedupe across clusters only: rows sharing a non-null cluster_id are never duplicates of each other.
+    seen: dict[str, list[str | None]] = {}
     kept: list[Decision] = []
-    dropped_clusters: set[str] = set()
+    dup_clusters: set[str] = set()
     for d in survivors:
         key = dedupe_key(d)
-        if key in seen:
+        if any(c is None or c != d.cluster_id for c in seen.get(key, [])):
             counts[d.source]["duplicate"] += 1
             if d.cluster_id is not None:
-                dropped_clusters.add(d.cluster_id)
+                dup_clusters.add(d.cluster_id)
             continue
-        seen.add(key)
+        seen.setdefault(key, []).append(d.cluster_id)
         kept.append(d)
         counts[d.source]["out"] += 1
 
-    # Clusters stay whole: a cluster that lost a member to dedupe loses all of them.
-    if dropped_clusters:
-        remaining: list[Decision] = []
+    if dup_clusters:
+        remaining = []
         for d in kept:
-            if d.cluster_id in dropped_clusters:
+            if d.cluster_id in dup_clusters:
                 counts[d.source]["out"] -= 1
                 counts[d.source]["duplicate"] += 1
             else:
