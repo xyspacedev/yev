@@ -82,3 +82,14 @@ def test_deeppavlov_hwu64_specifically():
 def test_model_generated_permissive_datasets_allowed():
     check("karanxa/agent-action-safety-dataset", "apache-2.0")
     check("montehoover/DynaBench", "mit", config="DynaBenchTrain")
+
+
+@pytest.mark.parametrize("files", ["val.jsonl", "val_sft.jsonl", "data/test.parquet"])
+def test_non_train_data_files_refused(files):
+    with pytest.raises(LicenceError, match="split"):
+        check("toy/toy", "mit", data_files=files)
+
+
+@pytest.mark.parametrize("files", ["train.jsonl", "train_sft.jsonl"])
+def test_train_data_files_allowed(files):
+    check("toy/toy", "mit", data_files=files)

@@ -95,7 +95,7 @@ def _label_universe(rows: list[dict], column: str) -> list[str]:
 
 
 def build(spec: SourceSpec, rows: Iterable[dict], seed: int = 0) -> tuple[list[Decision], BuildStats]:
-    licences.check(spec.hf_id, spec.licence, config=spec.config, split=spec.split)
+    licences.check(spec.hf_id, spec.licence, config=spec.config, split=spec.split, data_files=spec.data_files)
     rows = list(rows)
     labels = _label_universe(rows, spec.label_column) if spec.label_column else []
     rng = random.Random(f"{seed}:{spec.name}")
@@ -165,5 +165,5 @@ def _iter_rows(spec: SourceSpec) -> Iterator[dict]:
 
 def fetch(spec: SourceSpec) -> Iterator[dict]:
     """Load the spec's train split with licence guard, yielding rows with ClassLabel ints mapped to names."""
-    licences.check(spec.hf_id, spec.licence, config=spec.config, split=spec.split)
+    licences.check(spec.hf_id, spec.licence, config=spec.config, split=spec.split, data_files=spec.data_files)
     return _iter_rows(spec)

@@ -50,3 +50,15 @@ def test_optional_fields_rendered_when_present():
 def test_blank_action_or_missing_label_skipped():
     assert convert_agent_action_safety(row(action="  "), 0, R, []) == []
     assert convert_agent_action_safety(row(is_safe=None), 0, R, []) == []
+
+
+def test_malformed_conversation_and_constraints_render():
+    conv = [None, "x", {"role": None, "content": ["tool", "payload"]}, {"content": "hi"}]
+    [d] = convert_agent_action_safety(row(conversation=conv, constraints="Only staging."), 0, R, [])
+    assert "Constraints:\n- Only staging." in d.state and "unknown: hi" in d.state
+    assert convert_agent_action_safety(row(is_safe=False, severity="High"), 0, R, [])[0].gold == "block"
+
+
+def test_option_descriptions_similar_length():
+    lens = [len(v) for v in ACTION_OPTIONS.values()]
+    assert max(lens) - min(lens) <= 15

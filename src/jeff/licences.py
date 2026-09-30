@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 # Commercially usable. `oanc-mixed` is MultiNLI's own statement (OANC plus CC-BY-SA-3.0 fiction).
 ALLOWED = frozenset(
     {"apache-2.0", "mit", "cc0-1.0", "cc-by-3.0", "cc-by-4.0", "cc-by-sa-3.0", "cc-by-sa-4.0", "oanc-mixed"}
@@ -47,7 +49,7 @@ def is_allowed(licence: str) -> bool:
     return licence in ALLOWED
 
 
-def check(hf_id: str, licence: str, *, config: str | None = None, split: str = "train") -> None:
+def check(hf_id: str, licence: str, *, config: str | None = None, split: str = "train", data_files: str | None = None) -> None:
     hf_id_lower = hf_id.lower()
     if hf_id_lower in _FORBIDDEN_DATASETS_LC:
         raise LicenceError(f"{hf_id} is forbidden for training")
@@ -58,5 +60,7 @@ def check(hf_id: str, licence: str, *, config: str | None = None, split: str = "
         part = part.strip().split("[")[0]
         if part != "train":
             raise LicenceError(f"{hf_id}: only train splits may be used, got split {split!r}")
+    if data_files and re.search(r"(^|[^a-z])(val|valid|validation|dev|test)([^a-z]|$)", data_files.lower()):
+        raise LicenceError(f"{hf_id}: only train splits may be used, got split-like data_files {data_files!r}")
     if not is_allowed(licence):
         raise LicenceError(f"{hf_id}: licence {licence!r} is not commercially usable")
