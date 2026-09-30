@@ -60,6 +60,11 @@ SOURCES += [
 ]
 
 
+# Sources read from a local checkout rather than the Hub. Each writes its own files (several
+# families plus attribution), so build-public runs them only when named in --only.
+LOCAL_SOURCES = ("skill_atlas",)
+
+
 def by_name(name: str) -> SourceSpec:
     for spec in SOURCES:
         if spec.name == name:

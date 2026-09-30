@@ -33,7 +33,8 @@ from jeff.generators.llm.plan import plan_batches, render_writer_prompt
 from jeff.generators.specs import SYNTHETIC_SPECS
 from jeff.schema import read_jsonl, write_jsonl
 from jeff.sources.base import build, fetch
-from jeff.sources.registry import SOURCES
+from jeff.sources import skill_atlas
+from jeff.sources.registry import LOCAL_SOURCES, SOURCES
 
 
 def _write_stats_atomically(stats_path: Path, all_stats: dict) -> None:
@@ -62,7 +63,7 @@ def _git_sha() -> str | None:
 def cmd_build_public(args: argparse.Namespace) -> int:
     # Validate --only names
     if args.only:
-        valid_names = {spec.name for spec in SOURCES}
+        valid_names = {spec.name for spec in SOURCES} | set(LOCAL_SOURCES)
         unknown = [name for name in args.only if name not in valid_names]
         if unknown:
             print(f"Unknown sources: {', '.join(unknown)}")
@@ -86,6 +87,16 @@ def cmd_build_public(args: argparse.Namespace) -> int:
         except Exception as exc:
             print(f"{spec.name}: FAILED: {exc!r}")
             failed.append(spec.name)
+
+    if args.only and skill_atlas.NAME in args.only:
+        try:
+            stats = skill_atlas.run(out, root=args.skill_atlas_root, seed=args.seed)
+            all_stats[skill_atlas.NAME] = stats
+            print(f"{skill_atlas.NAME}: {json.dumps(stats)}")
+            _write_stats_atomically(stats_path, all_stats)
+        except Exception as exc:
+            print(f"{skill_atlas.NAME}: FAILED: {exc!r}")
+            failed.append(skill_atlas.NAME)
 
     return 1 if failed else 0
 
@@ -424,6 +435,8 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--natural", action="store_true", help="sample with natural label priors (calibration)")
     p.add_argument("--pool-scale", type=float, default=1.0)
+    p.add_argument("--skill-atlas-root", default=str(skill_atlas.DEFAULT_ROOT),
+                   help="local skill-atlas checkout, read only by --only skill_atlas")
     p.set_defaults(func=cmd_build_public)
 
     p = sub.add_parser("dev", help="write the DecideBench examples pool as the dev set")
