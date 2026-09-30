@@ -33,7 +33,9 @@ Plan 1's outcome and carry-over notes are at the end of `docs/superpowers/plans/
 **Cluster rules**
 - A cluster is kept only if it has ≥ 2 members with **different** golds.
 - Every non-base variant changes ≤ 15 tokens relative to the base state (`token_edit_size`).
-- A `policy_edit` variant keeps the base state and changes exactly one option description, by ≤ 15 tokens.
+- A `policy_edit` variant keeps the base state.
+  - LLM-written variants change exactly one option description, by ≤ 15 tokens.
+  - Rule-based variants change one policy parameter, rendered consistently in every description that mentions it, with ≤ 15 tokens changed across all option text.
 - An `injection` variant keeps the base gold.
 - Score-type options are never shuffled, because they are an ordered scale.
 
