@@ -19,6 +19,7 @@ from jeff.filters.contamination import (
     sentence_transformer_encoder,
 )
 from jeff.filters.pipeline import assert_clean, run_filters
+from jeff.generators.specs import SYNTHETIC_SPECS
 from jeff.schema import read_jsonl, write_jsonl
 from jeff.sources.base import build, fetch
 from jeff.sources.registry import SOURCES
@@ -96,7 +97,7 @@ def cmd_filter(args: argparse.Namespace) -> int:
     decisions = [d for path in files for d in read_jsonl(path)]
     fp = load_fingerprints()
     embed = None if args.no_embed else EmbeddingFilter(fp.states, sentence_transformer_encoder())
-    kept, report = run_filters(decisions, fp, embed, {s.name: s for s in SOURCES})
+    kept, report = run_filters(decisions, fp, embed, {s.name: s for s in [*SOURCES, *SYNTHETIC_SPECS]})
     assert_clean(kept, fp)
     by_source: dict[str, list] = defaultdict(list)
     for d in kept:
