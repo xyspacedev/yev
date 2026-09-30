@@ -12,9 +12,9 @@ OPTS = [Option("a", "Option a."), Option("b", "Option b."), Option("c", "Option 
 NO_BENCH = build_fingerprints([])
 
 
-def dec(i, gold, source, state=None, cluster=None, split="pool"):
+def dec(i, gold, source, state=None, cluster=None, split="pool", family="f", licence="mit", options=None):
     return Decision(id=f"{source}:{i}", type="choice", state=state or f"{source} state number {i}.", question="Which?",
-                    options=list(OPTS), gold=gold, family="f", source=source, licence="mit", cluster_id=cluster,
+                    options=list(options or OPTS), gold=gold, family=family, source=source, licence=licence, cluster_id=cluster,
                     split=split)
 
 
@@ -100,3 +100,58 @@ def test_write_mix_outputs_and_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "load_fingerprints", lambda: NO_BENCH)
     assert cli.main(["mix", "--recipe", str(tmp_path / "recipe.json"), "--out", str(tmp_path / "mix2")]) == 0
     assert cli.main(["mix", "--recipe", str(tmp_path / "nope.json"), "--out", str(tmp_path / "mix3")]) == 2
+
+
+def _recipe(tmp_path, blocks, **extra):
+    return {"name": "t", "seed": 0, "blocks": blocks, **extra}
+
+
+def test_dev_holdout_is_stratified_by_family(tmp_path):
+    rows = [dec(f * 1000 + b * 10 + m, "ab"[m], "synthetic_opus", cluster=f"run:batch-{f}{b:02d}:0", family=f"fam{f}")
+            for f in range(3) for b in range(10) for m in range(2)]
+    write_jsonl(tmp_path / "o.jsonl", rows)
+    recipe = _recipe(tmp_path, [{"name": "opus", "files": [str(tmp_path / "o.jsonl")], "rows": 1000, "dev_share": 0.1}])
+    res = build_mix(recipe, NO_BENCH)
+    assert {d.family for d in res.dev} == {"fam0", "fam1", "fam2"}
+    assert len({holdout_key(d) for d in res.dev}) == 3
+
+
+def test_disallowed_licence_raises_in_train_and_calibration(tmp_path):
+    good = [dec(i, "a", "pub") for i in range(10)]
+    bad = [dec(100 + i, "a", "nc", licence="cc-by-nc-4.0") for i in range(10)]
+    write_jsonl(tmp_path / "g.jsonl", good)
+    write_jsonl(tmp_path / "b.jsonl", bad)
+    with pytest.raises(ValueError, match="cc-by-nc-4.0"):
+        build_mix(_recipe(tmp_path, [{"name": "x", "files": [str(tmp_path / "*.jsonl")], "rows": 100}]), NO_BENCH)
+    recipe = _recipe(tmp_path, [{"name": "x", "files": [str(tmp_path / "g.jsonl")], "rows": 100}],
+                     calibration={"files": [str(tmp_path / "b.jsonl")], "rows": 5})
+    with pytest.raises(ValueError, match="cc-by-nc-4.0"):
+        build_mix(recipe, NO_BENCH)
+
+
+def test_any_missing_glob_raises(tmp_path):
+    write_jsonl(tmp_path / "g.jsonl", [dec(1, "a", "pub")])
+    recipe = _recipe(tmp_path, [{"name": "x", "files": [str(tmp_path / "g.jsonl"), str(tmp_path / "missing*.jsonl")],
+                                 "rows": 5}])
+    with pytest.raises(FileNotFoundError, match="missing"):
+        build_mix(recipe, NO_BENCH)
+
+
+def test_examples_rate_applies_among_eligible_rows(tmp_path):
+    # 60% of rows (family "elig") have a full gold set in the pool; the rest are family "lone" with a single gold
+    other = [Option("x", "X."), Option("y", "Y.")]
+    rows = []
+    for i in range(300):
+        rows.append(dec(i, "abc"[i % 3], "pub", family="elig"))
+    for i in range(200):
+        rows.append(dec(1000 + i, "x", "pub", family="lone", options=other))
+    write_jsonl(tmp_path / "p.jsonl", rows)
+    recipe = _recipe(tmp_path, [{"name": "x", "files": [str(tmp_path / "p.jsonl")], "rows": 1000}], examples_rate=0.35)
+    res = build_mix(recipe, NO_BENCH)
+    report = write_mix(res, recipe, tmp_path / "out")
+    fmt = report["format"]
+    assert fmt["train_eligible"] == 300
+    assert abs(fmt["train_examples"] / len(res.train) - 0.35) <= 0.03
+    chats = [json.loads(l) for l in (tmp_path / "out" / "train.chat.jsonl").read_text().splitlines()]
+    with_ex = sum(len(c["messages"]) > 2 for c in chats)
+    assert with_ex == fmt["train_examples"]

@@ -64,6 +64,9 @@ def test_example_pool_returns_none_when_key_missing_or_too_long():
     long_pool = ExamplePool([d(i, "abc"[i % 3], cluster=f"k{i}", state="x" * 5000) for i in range(6)])
     assert long_pool.pick(d(9, "a"), random.Random(0)) is None
     assert signature(d(1, "a")) == signature(d(2, "c"))
+    other_desc = [Option("a", "Different a."), Option("b", "Different b."), Option("c", "Different c.")]
+    assert signature(d(1, "a")) == signature(d(2, "c", options=other_desc))
+    assert signature(d(1, "a")) != signature(d(2, "c", type="score"))
 
 
 def test_pick_skips_identical_state_candidate():

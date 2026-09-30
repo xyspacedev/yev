@@ -34,7 +34,7 @@ def user_turn(d: Decision, options: list[Option]) -> str:
 
 
 def signature(d: Decision) -> tuple:
-    return (d.type, tuple(sorted((o.key, o.description) for o in d.options)))
+    return (d.type, d.family, tuple(sorted(d.keys)))
 
 
 def _unit(d: Decision) -> str:
