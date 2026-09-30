@@ -1,21 +1,40 @@
 #!/usr/bin/env bash
-# Run a command on the training box: run.sh [--bg] <cmd...>
-# With --bg the command runs under nohup and logs to ~/runs/<first arg basename>.log.
+# Run a command on the training box: run.sh [--bg [--log NAME]] <cmd...>
+# With --bg the command runs under nohup and logs to ~/runs/<NAME>.log, where NAME is
+# --log, else the value after --config (e.g. lc25), else basename of the command plus a UTC timestamp.
 # Requires JEFF_TRAIN_HOST (user@host) and JEFF_TRAIN_KEY (path to ssh key).
 set -euo pipefail
 [ -n "${JEFF_TRAIN_HOST:-}" ] || { echo "JEFF_TRAIN_HOST is not set" >&2; exit 2; }
 [ -n "${JEFF_TRAIN_KEY:-}" ] || { echo "JEFF_TRAIN_KEY is not set" >&2; exit 2; }
 
 BG=0
-if [ "${1:-}" = "--bg" ]; then BG=1; shift; fi
-[ "$#" -gt 0 ] || { echo "usage: run.sh [--bg] <cmd...>" >&2; exit 64; }
+LOG=""
+if [ "${1:-}" = "--bg" ]; then
+  BG=1; shift
+  if [ "${1:-}" = "--log" ]; then
+    [ "$#" -ge 2 ] || { echo "--log needs a name" >&2; exit 64; }
+    LOG="$2"; shift 2
+  fi
+fi
+[ "$#" -gt 0 ] || { echo "usage: run.sh [--bg [--log NAME]] <cmd...>" >&2; exit 64; }
 
-LOG="$(basename "$1")"
+if [ -z "$LOG" ]; then
+  prev=""
+  for a in "$@"; do
+    if [ "$prev" = "--config" ]; then LOG="$(basename "$a" .json)"; break; fi
+    prev="$a"
+  done
+fi
+[ -n "$LOG" ] || LOG="$(basename "$1")-$(date -u +%Y%m%dT%H%M%SZ)"
+
+SSH=(ssh -i "$JEFF_TRAIN_KEY")
 CMD="$(printf '%q ' "$@")"
-PRE="cd ~/jeff && ~/venv/bin/pip install -q -e '.[train]' --no-deps"
+# \$HOME and \$PATH expand on the remote side.
+INNER="export PATH=\"\$HOME/venv/bin:\$PATH\" && cd ~/jeff && pip install -q -e '.[train]' --no-deps && $CMD"
 
 if [ "$BG" = 1 ]; then
-  ssh -i "$JEFF_TRAIN_KEY" "$JEFF_TRAIN_HOST" "mkdir -p ~/runs && nohup bash -c \"$PRE && $CMD\" > ~/runs/$LOG.log 2>&1 &"
+  REMOTE="mkdir -p ~/runs && nohup bash -c $(printf %q "$INNER") > ~/runs/$(printf %q "$LOG").log 2>&1 < /dev/null &"
 else
-  ssh -i "$JEFF_TRAIN_KEY" "$JEFF_TRAIN_HOST" "$PRE && $CMD"
+  REMOTE="bash -c $(printf %q "$INNER")"
 fi
+"${SSH[@]}" "$JEFF_TRAIN_HOST" "$REMOTE"
