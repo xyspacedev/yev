@@ -3229,3 +3229,34 @@ Expected: the files are visible at `https://huggingface.co/datasets/choyiny/jeff
 
 Paste `build_stats.json` and `filter_report.json` totals into the PR description for this branch.
 Plan 2's mix recipe reads the kept counts from there.
+
+---
+
+## Outcome and carry-over (recorded 2026-09-29 at completion)
+
+**Pool built.** 38 sources:
+- 99,729 rows went in and 98,833 came out.
+- Canary hits: 0. 8-gram hits: 9. Embedding hits: 33. Duplicates: 854.
+- There are no duplicate ids.
+- 5,931 contrastive clusters hold 17,001 rows.
+- 121,700 FEVER-derived VitaminC rows were excluded.
+- The dev set is 297 DecideBench examples.
+- Everything is local under `data/`. Nothing is uploaded until the project is finished (user instruction).
+
+**Carry to Plan 2 (mixer, synthetic data):**
+- Build the train/dev/calibration splits so that rows sharing a `state` stay together. The fast-decisions multi-label nouls share state.
+- Ignore or merge the 40 singleton clusters for L_pair.
+- Draw the calibration split with natural label priors. `sample_pool` balances by gold.
+- Re-check `assert_clean` against independently loaded fingerprints.
+- Unblock the `nvidia/When2Call` `train` config explicitly when routing sources are added. The whole id is currently on the denylist.
+- Reword the fast-decisions yes/no questions ("For this input: is phishing?").
+- The TF-IDF shortcut filter (spec §4.4 step 6) is still to do.
+- Consider deduping inside `build` before `sample_pool`. Aegis lost 5% and it_support 17% to duplicates after sampling.
+
+**Carry to Plan 4 (release):**
+- Pin every source to a snapshot sha.
+- Carry the per-row upstream licence for Eikos (GSM8K is MIT).
+- Keep the VitaminC BIG-bench canary field if public rows are republished.
+- Split `BuildStats` skip causes (DynaBench skips 3.9%, probably states over 6,000 characters).
+
+**Open question for the user:** spec §4.5 says "Eikos strict slice", but it never defines it. The adapter takes all English train rows, including rows written by Qwen/GLM with teacher labels. That is consistent with rule 7.
