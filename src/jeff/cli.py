@@ -19,6 +19,7 @@ from jeff.filters.contamination import (
     sentence_transformer_encoder,
 )
 from jeff.filters.pipeline import assert_clean, run_filters
+from jeff.generators import actions, returns, severity
 from jeff.generators.specs import SYNTHETIC_SPECS
 from jeff.schema import read_jsonl, write_jsonl
 from jeff.sources.base import build, fetch
@@ -85,6 +86,16 @@ def cmd_dev(args: argparse.Namespace) -> int:
     return 0
 
 
+RULE_GENERATORS = {"returns": returns.generate, "actions": actions.generate, "severity": severity.generate}
+
+
+def cmd_gen_rules(args: argparse.Namespace) -> int:
+    rows = RULE_GENERATORS[args.family](args.clusters, args.seed)
+    n = write_jsonl(args.out, rows)
+    print(f"{args.family}: {n} rows in {len({r.cluster_id for r in rows})} clusters -> {args.out}")
+    return 0
+
+
 def cmd_filter(args: argparse.Namespace) -> int:
     src, out = Path(args.inp), Path(args.out)
     if src.resolve() == out.resolve():
@@ -140,6 +151,13 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True)
     p.add_argument("--no-embed", action="store_true", help="skip the embedding filter (tests only)")
     p.set_defaults(func=cmd_filter)
+
+    p = sub.add_parser("gen-rules", help="generate rule-based contrastive clusters")
+    p.add_argument("--family", required=True, choices=sorted(RULE_GENERATORS))
+    p.add_argument("--clusters", type=int, required=True)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_gen_rules)
     return parser
 
 
