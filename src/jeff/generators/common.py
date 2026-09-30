@@ -12,6 +12,24 @@ EDIT_TYPES = (
     "negation", "threshold", "date", "entity_swap", "quantifier",
     "exception", "unit", "policy_edit", "injection",
 )
+EDIT_TYPE_DEFINITIONS = {
+    "negation": "something is made true/false: 'is' vs 'is not', 'lost' vs 'kept', 'has' vs 'lacks'",
+    "threshold": "a number moves across a limit: $500 vs $501, 99 vs 100 users",
+    "date": "a date or duration moves across a window: day 30 vs day 31, before vs after a deadline",
+    "entity_swap": "one thing is replaced by another of the same kind: production vs staging, internal vs external",
+    "quantifier": "how many is changed: all vs some, every vs one, none vs any",
+    "exception": "an exception or special condition is added or removed: 'final sale', 'has an approved ticket'",
+    "unit": "a unit or scale changes: hours vs days, MB vs GB, per month vs per year",
+    "policy_edit": "the input text is identical but one option's rule text changed",
+    "injection": "the input gains a sentence that tries to instruct the reader, and nothing else changes",
+}
+EDIT_TIE_BREAKS = (
+    "Tie-breaks: date: the changed value is a calendar date or an elapsed time/duration; "
+    "unit: only the unit word changes (hours -> days); threshold: any other number changes; "
+    "exception: a special-case clause is added or removed; "
+    "negation: a fact flips true/false without adding a clause."
+)
+NUMERIC_GROUP = frozenset({"threshold", "date", "unit"})
 SYNTH_LICENCE = "cc-by-4.0"
 MAX_EDIT_TOKENS = 15
 
@@ -65,3 +83,21 @@ def keep_valid_clusters(decisions: list[Decision]) -> list[Decision]:
     for d in decisions:
         golds[d.cluster_id].add(d.gold)
     return [d for d in decisions if d.cluster_id is not None and len(golds[d.cluster_id]) >= 2]
+
+
+def spread_into_parts(items: list, cluster_of: list[str], part_size: int, rng) -> list[list]:
+    """Split items into parts so that no part holds two items of the same cluster."""
+    import math
+
+    groups: dict[str, list] = defaultdict(list)
+    for item, c in zip(items, cluster_of):
+        groups[c].append(item)
+    n_parts = max(math.ceil(len(items) / part_size), max((len(g) for g in groups.values()), default=1), 1)
+    parts: list[list] = [[] for _ in range(n_parts)]
+    for c in sorted(groups):
+        offset = rng.randrange(n_parts)
+        for j, item in enumerate(groups[c]):
+            parts[(offset + j) % n_parts].append(item)
+    for part in parts:
+        rng.shuffle(part)
+    return [p for p in parts if p]

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import random
+import re
 from collections import Counter, defaultdict
 from dataclasses import replace
 
-from jeff.generators.common import keep_valid_clusters
+from jeff.generators.common import keep_valid_clusters, spread_into_parts
 from jeff.schema import Decision
 
 LETTERS = "ABCDEF"
@@ -21,7 +22,10 @@ def prepare_sheets(
     for s in range(n_sheets):
         rng = random.Random(f"{seed}:sheet:{s}")
         items: list[dict] = []
+        owner: dict[str, str] = {}
         for d in decisions:
+            if len(d.options) > len(LETTERS):
+                raise ValueError(f"decision {d.id} has {len(d.options)} options; at most {len(LETTERS)} are supported")
             options = list(d.options)
             if d.type != "score":
                 rng.shuffle(options)
@@ -34,9 +38,10 @@ def prepare_sheets(
                 "question": d.question,
                 "options": [{"letter": LETTERS[i], "description": o.description} for i, o in enumerate(options)],
             })
+            owner[item_id] = d.cluster_id or d.id
         rng.shuffle(items)
-        for p in range(0, len(items), part_size):
-            parts.append((f"sheet-{s}-part-{p // part_size}", items[p : p + part_size]))
+        for p, part in enumerate(spread_into_parts(items, [owner[i["item_id"]] for i in items], part_size, rng)):
+            parts.append((f"sheet-{s}-part-{p}", part))
     return parts, key
 
 
@@ -60,6 +65,9 @@ def score_answers(decisions: list[Decision], key: dict, answers: list[dict]) -> 
     votes: dict[str, list[str]] = defaultdict(list)
     seen: set[str] = set()
     for a in answers:
+        if not isinstance(a, dict):
+            stats["non_object_answer"] += 1
+            continue
         item_id = str(a.get("item_id", ""))
         entry = key.get(item_id)
         if entry is None:
@@ -68,12 +76,12 @@ def score_answers(decisions: list[Decision], key: dict, answers: list[dict]) -> 
         if item_id in seen:
             stats["duplicate_answer"] += 1
             continue
-        seen.add(item_id)
-        letter = str(a.get("letter", "")).strip().upper()[:1]
-        chosen = entry["letters"].get(letter)
+        m = re.search(r"\b([A-F])\b", str(a.get("letter", "")).upper())
+        chosen = entry["letters"].get(m.group(1)) if m else None
         if chosen is None:
             stats["bad_letter"] += 1
             continue
+        seen.add(item_id)
         votes[entry["decision"]].append(chosen)
 
     survivors: list[Decision] = []

@@ -7,13 +7,14 @@ from collections import Counter
 from pathlib import Path
 
 from jeff.generators.common import EDIT_TYPES, MAX_EDIT_TOKENS, make_cluster, token_edit_size
+from jeff.generators.llm.check import LETTERS
 from jeff.schema import Decision, Option, SchemaError
 
 SOURCE = "synthetic_opus"
 
 
 def _options(raw: list[dict]) -> list[Option]:
-    return [Option(str(o["key"]).strip(), str(o["description"]).strip()) for o in raw]
+    return [Option(str(o["key"]).strip().lower(), str(o["description"]).strip()) for o in raw]
 
 
 def _policy_edit_ok(base: list[Option], new: list[Option]) -> bool:
@@ -25,16 +26,23 @@ def _policy_edit_ok(base: list[Option], new: list[Option]) -> bool:
 
 def parse_cluster(obj: dict, *, cluster_id: str, family: str, qtype: str) -> tuple[list[Decision], Counter]:
     reasons: Counter = Counter()
+    if len(obj["options"]) > len(LETTERS):
+        reasons["too_many_options"] += 1
+        reasons["cluster_rejected"] += 1
+        return [], reasons
     question = str(obj["question"]).strip()
     options = _options(obj["options"])
-    base_state, base_gold = str(obj["base"]["state"]).strip(), str(obj["base"]["gold"]).strip()
+    base_state, base_gold = str(obj["base"]["state"]).strip(), str(obj["base"]["gold"]).strip().lower()
     members: list[tuple[str, list[Option], str, str | None]] = [(base_state, options, base_gold, None)]
     for v in obj.get("variants") or []:
-        state, gold, edit = str(v["state"]).strip(), str(v["gold"]).strip(), v.get("edit_type")
+        state, gold = str(v["state"]).strip(), str(v["gold"]).strip().lower()
+        edit = str(v.get("edit_type") or "").strip().lower()
         if edit not in EDIT_TYPES or edit == "policy_edit":
             reasons["bad_edit_type"] += 1
         elif token_edit_size(base_state, state) > MAX_EDIT_TOKENS:
             reasons["edit_too_large"] += 1
+        elif token_edit_size(base_state, state) < 1:
+            reasons["no_edit"] += 1
         elif edit == "injection" and gold != base_gold:
             reasons["injection_changed_gold"] += 1
         elif edit != "injection" and gold == base_gold:
@@ -42,9 +50,12 @@ def parse_cluster(obj: dict, *, cluster_id: str, family: str, qtype: str) -> tup
         else:
             members.append((state, options, gold, edit))
     for v in obj.get("policy_variants") or []:
+        if len(v["options"]) > len(LETTERS):
+            reasons["too_many_options"] += 1
+            continue
         new_options = _options(v["options"])
-        gold = str(v["gold"]).strip()
-        if v.get("edit_type") != "policy_edit" or not _policy_edit_ok(options, new_options) or gold == base_gold:
+        gold = str(v["gold"]).strip().lower()
+        if str(v.get("edit_type") or "").strip().lower() != "policy_edit" or not _policy_edit_ok(options, new_options) or gold == base_gold:
             reasons["bad_policy_edit"] += 1
         else:
             members.append((base_state, new_options, gold, "policy_edit"))
@@ -66,10 +77,37 @@ def parse_cluster(obj: dict, *, cluster_id: str, family: str, qtype: str) -> tup
     return valid, reasons
 
 
+def _handle(obj, n: int, batch: dict, stats: Counter, out: list[Decision]) -> None:
+    try:
+        decisions, reasons = parse_cluster(obj, cluster_id=f"{batch['batch_id']}:{n}",
+                                           family=batch["family"], qtype=batch["qtype"])
+    except (KeyError, TypeError, AttributeError):
+        stats["bad_shape"] += 1
+        return
+    stats.update(reasons)
+    if decisions:
+        stats["clusters_kept"] += 1
+        out.extend(decisions)
+
+
+def _scan_objects(text: str):
+    dec, pos = json.JSONDecoder(), 0
+    while (pos := text.find("{", pos)) != -1:
+        try:
+            obj, end = dec.raw_decode(text, pos)
+        except json.JSONDecodeError:
+            pos += 1
+            continue
+        yield obj
+        pos = end
+
+
 def ingest_file(path: Path | str, batch: dict) -> tuple[list[Decision], Counter]:
+    text = Path(path).read_text(encoding="utf-8")
     stats: Counter = Counter()
     out: list[Decision] = []
-    for n, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines()):
+    parsed = 0
+    for n, line in enumerate(text.splitlines()):
         if not line.strip():
             continue
         stats["lines"] += 1
@@ -78,14 +116,12 @@ def ingest_file(path: Path | str, batch: dict) -> tuple[list[Decision], Counter]
         except json.JSONDecodeError:
             stats["bad_json"] += 1
             continue
-        try:
-            decisions, reasons = parse_cluster(obj, cluster_id=f"{batch['batch_id']}:{n}",
-                                               family=batch["family"], qtype=batch["qtype"])
-        except (KeyError, TypeError, AttributeError):
-            stats["bad_shape"] += 1
-            continue
-        stats.update(reasons)
-        if decisions:
-            stats["clusters_kept"] += 1
-            out.extend(decisions)
+        parsed += 1
+        _handle(obj, n, batch, stats, out)
+    if parsed == 0 and "{" in text:
+        stats, out = Counter(), []
+        for n, obj in enumerate(_scan_objects(text)):
+            if isinstance(obj, dict):
+                stats["recovered_multiline"] += 1
+                _handle(obj, n, batch, stats, out)
     return out, stats

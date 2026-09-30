@@ -5,20 +5,13 @@ from __future__ import annotations
 import hashlib
 from collections import Counter, defaultdict
 
-from jeff.generators.common import keep_valid_clusters
+import random
+
+from jeff.generators.common import (
+    EDIT_TIE_BREAKS, EDIT_TYPE_DEFINITIONS, NUMERIC_GROUP, keep_valid_clusters, spread_into_parts,
+)
 from jeff.schema import Decision
 
-EDIT_TYPE_DEFINITIONS = {
-    "negation": "something is made true/false: 'is' vs 'is not', 'lost' vs 'kept', 'has' vs 'lacks'",
-    "threshold": "a number moves across a limit: $500 vs $501, 99 vs 100 users",
-    "date": "a date or duration moves across a window: day 30 vs day 31, before vs after a deadline",
-    "entity_swap": "one thing is replaced by another of the same kind: production vs staging, internal vs external",
-    "quantifier": "how many is changed: all vs some, every vs one, none vs any",
-    "exception": "an exception or special condition is added or removed: 'final sale', 'has an approved ticket'",
-    "unit": "a unit or scale changes: hours vs days, MB vs GB, per month vs per year",
-    "policy_edit": "the input text is identical but one option's rule text changed",
-    "injection": "the input gains a sentence that tries to instruct the reader, and nothing else changes",
-}
 
 
 def prepare_pairs(decisions: list[Decision], part_size: int = 100, seed: int = 0) -> tuple[list[tuple[str, list[dict]]], dict]:
@@ -27,6 +20,7 @@ def prepare_pairs(decisions: list[Decision], part_size: int = 100, seed: int = 0
         clusters[d.cluster_id].append(d)
     key: dict = {"_no_base": []}
     items: list[dict] = []
+    owner: list[str] = []
     for cid in sorted(clusters):
         members = clusters[cid]
         base = next((d for d in members if d.edit_type is None), None)
@@ -43,7 +37,9 @@ def prepare_pairs(decisions: list[Decision], part_size: int = 100, seed: int = 0
                 "a": {"state": base.state, "options": [o.description for o in base.options]},
                 "b": {"state": d.state, "options": [o.description for o in d.options]},
             })
-    parts = [(f"pairs-part-{p // part_size}", items[p : p + part_size]) for p in range(0, len(items), part_size)]
+            owner.append(cid)
+    rng = random.Random(f"{seed}:pairs")
+    parts = [(f"pairs-part-{i}", part) for i, part in enumerate(spread_into_parts(items, owner, part_size, rng))]
     return parts, key
 
 
@@ -56,6 +52,8 @@ Read `{pairs_path}`. Each line is a pair: version `a` and version `b` of the sam
 
 {definitions}
 
+{EDIT_TIE_BREAKS}
+
 Do not open any other file or directory.
 
 Write your answers to `{answers_path}` with the Write tool: one JSON object per line, exactly
@@ -66,20 +64,35 @@ Then reply with only the number of answers written.
 
 def score_attribution(decisions: list[Decision], key: dict, answers: list[dict]) -> tuple[list[Decision], Counter]:
     stats: Counter = Counter()
-    answered = {str(a.get("pair_id", "")): str(a.get("edit_type", "")).strip().lower() for a in answers}
+    answered: dict[str, str] = {}
+    for a in answers:
+        if not isinstance(a, dict):
+            stats["non_object_answer"] += 1
+            continue
+        pair_id = str(a.get("pair_id", ""))
+        if pair_id == "_no_base" or pair_id not in key:
+            stats["unknown_pair"] += 1
+        elif pair_id in answered:
+            stats["duplicate_answer"] += 1
+        else:
+            answered[pair_id] = str(a.get("edit_type", "")).strip().lower()
     verdict: dict[str, bool] = {}
     for pair_id, entry in key.items():
         if pair_id == "_no_base":
             continue
         got = answered.get(pair_id)
+        want = entry["edit_type"]
         if got is None:
             stats["attrib_missing"] += 1
             verdict[entry["decision"]] = False
-        elif got != entry["edit_type"]:
+        elif got == want:
+            verdict[entry["decision"]] = True
+        elif got in NUMERIC_GROUP and want in NUMERIC_GROUP:
+            stats["attrib_numeric_group_match"] += 1
+            verdict[entry["decision"]] = True
+        else:
             stats["attrib_mismatch"] += 1
             verdict[entry["decision"]] = False
-        else:
-            verdict[entry["decision"]] = True
     no_base = set(key.get("_no_base", []))
     stats["no_base"] = len(no_base)
     survivors = [d for d in decisions if d.id not in no_base and (d.edit_type is None or verdict.get(d.id, False))]

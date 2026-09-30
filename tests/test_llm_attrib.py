@@ -31,7 +31,7 @@ def test_scoring_keeps_matches_and_counts_problems():
     parts, key = prepare_pairs(ds)
     by_decision = {v["decision"]: pid for pid, v in key.items() if pid != "_no_base"}
     answers = [{"pair_id": by_decision["k1:1"], "edit_type": " Negation "},
-               {"pair_id": by_decision["k1:2"], "edit_type": "unit"}]
+               {"pair_id": by_decision["k1:2"], "edit_type": "negation"}]
     kept, stats = score_attribution(ds, key, answers)
     assert [d.id for d in kept] == ["k1:0", "k1:1"]
     assert stats["attrib_mismatch"] == 1 and stats["no_base"] == 1
