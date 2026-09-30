@@ -102,6 +102,7 @@ def build(spec: SourceSpec, rows: Iterable[dict], seed: int = 0) -> tuple[list[D
     stats = BuildStats()
     converted: list[Decision] = []
     skipped_clusters: set[str] = set()
+    used_ids: set[str] = set()
     for i, row in enumerate(rows):
         stats.scanned += 1
         produced = spec.convert(row, i, rng, labels)
@@ -109,9 +110,15 @@ def build(spec: SourceSpec, rows: Iterable[dict], seed: int = 0) -> tuple[list[D
             stats.skipped += 1
             continue
         for d in produced:
+            new_id = f"{spec.name}:{d.id}"
+            n = 1
+            while new_id in used_ids:
+                n += 1
+                new_id = f"{spec.name}:{d.id}#{n}"
+            used_ids.add(new_id)
             d = replace(
                 d,
-                id=f"{spec.name}:{d.id}",
+                id=new_id,
                 source=spec.name,
                 licence=spec.licence,
                 cluster_id=f"{spec.name}:{d.cluster_id}" if d.cluster_id else None,

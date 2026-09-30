@@ -147,3 +147,15 @@ def test_fetch_passes_revision_and_data_files(monkeypatch):
     assert list(fetch(s)) == [{"x": 1}]
     assert seen == {"hf_id": "toy/toy", "config": "default", "split": "train",
                     "revision": "refs/convert/parquet", "data_files": {"train": "train.jsonl"}}
+
+
+def test_build_makes_duplicate_ids_unique_in_production_order():
+    def convert(row, i, rng, labels):
+        return [dec("x", state=row["s"])]
+
+    out, _ = build(spec(convert), [{"s": "one"}, {"s": "two"}, {"s": "three"}])
+    assert sorted(d.id for d in out) == ["toy:x", "toy:x#2", "toy:x#3"]
+    by_state = {d.state: d.id for d in out}
+    assert by_state == {"one": "toy:x", "two": "toy:x#2", "three": "toy:x#3"}
+    out2, _ = build(spec(convert), [{"s": "one"}, {"s": "two"}, {"s": "three"}])
+    assert {d.state: d.id for d in out2} == by_state
