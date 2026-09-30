@@ -62,3 +62,12 @@ def test_malformed_conversation_and_constraints_render():
 def test_option_descriptions_similar_length():
     lens = [len(v) for v in ACTION_OPTIONS.values()]
     assert max(lens) - min(lens) <= 15
+
+
+def test_wording_does_not_echo_decidebench():
+    banned = ["proceed automatically", "hold for human approval", "refuse outright",
+              "how should the proposed agent action be handled"]
+    [d] = convert_agent_action_safety(row(), 0, R, [])
+    texts = [*ACTION_OPTIONS.values(), d.question, *(o.description for o in d.options)]
+    for t in texts:
+        assert not any(b in t.lower() for b in banned)
