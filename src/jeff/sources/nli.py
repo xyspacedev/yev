@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import re
 
 from jeff.schema import Decision, Option
 
@@ -24,9 +25,11 @@ VITAMINC_LABELS = {"SUPPORTS": "supported", "REFUTES": "refuted", "NOT ENOUGH IN
 def evidence_decision(
     *, id: str, premise: str, hypothesis: str, gold: str, rng: random.Random, cluster_id: str | None = None
 ) -> Decision:
-    state_tpl, question = rng.choice(FRAMINGS)
+    # Siblings in a cluster share framing and option order, so they differ only by their edit.
+    frame_rng = random.Random(f"frame:{cluster_id}") if cluster_id else rng
+    state_tpl, question = frame_rng.choice(FRAMINGS)
     keys = list(EVIDENCE_OPTIONS)
-    rng.shuffle(keys)
+    frame_rng.shuffle(keys)
     return Decision(
         id=id,
         type="choice",
@@ -52,6 +55,9 @@ def _nli(id: str, premise, hypothesis, gold, rng, cluster_id=None) -> list[Decis
 
 
 def convert_vitaminc(row: dict, i: int, rng: random.Random, labels: list[str]) -> list[Decision]:
+    # Synthetic rows are derived from FEVER (GPL component; spec §2 rule 3). Keep only real Wikipedia revisions.
+    if row.get("revision_type") != "real" or row.get("FEVER_id"):
+        return []
     return _nli(
         str(row["unique_id"]), row["evidence"], row["claim"], VITAMINC_LABELS.get(row["label"]), rng,
         cluster_id=str(row["case_id"]),
@@ -67,7 +73,9 @@ def convert_multi_nli(row: dict, i: int, rng: random.Random, labels: list[str]) 
 
 
 def convert_snli_cf(row: dict, i: int, rng: random.Random, labels: list[str]) -> list[Decision]:
-    return _nli(str(row["idx"]), row["premise"], row["hypothesis"], NLI_LABELS.get(row["label"]), rng)
+    cluster = re.sub(r"-(orig|cf-\d+)$", "", str(row["idx"]))
+    return _nli(str(row["idx"]), row["premise"], row["hypothesis"], NLI_LABELS.get(row["label"]), rng,
+                cluster_id=cluster)
 
 
 def convert_negation(row: dict, i: int, rng: random.Random, labels: list[str]) -> list[Decision]:
