@@ -2199,3 +2199,56 @@ Tell the user:
 - **3 sample clusters**: one policy family, one score family, and one that lost a variant at each stage.
 
 Plan 2b (scale, shortcut filter, mixer and TEV-format output) is written from these numbers.
+
+---
+
+## Pilot outcome (recorded 2026-09-30)
+
+### Rule-based data
+- 600 clusters, 2,244 rows (seeds 101, 102 and 103).
+- **Filter hits** (8-gram overlap with DecideBench):
+  - Actions: 0.
+  - Severity: 0, plus 4 embedding hits.
+  - Returns: 332. Every one comes from a single template phrase, "the customer asked to send it back on", which appears in DecideBench.
+- **Carry to Plan 2b:** reword returns template 1.
+
+### Opus data
+
+**Survival by stage** (clusters are 1 base plus 2–4 variants; injections and policy edits count as rows):
+
+| Stage | Clusters | Rows |
+|---|---:|---:|
+| Planned | 200 | — |
+| Ingested | 200 | 724 (12 variants dropped for edits over 15 tokens) |
+| Blind-checked, 3 votes | 200 | 714 (10 checker disagreements; 12 answers used out-of-range letters) |
+| Attributed | 197 | 686 (24 mismatches; 4 accepted via the numeric group) |
+| After contamination filter | — | 660 |
+
+**Filter result:** 26 rows were caught by 8-gram overlap and none by embedding.
+- 22 of the hits are the "none of these" wording: "the message does not match any of the …".
+- 4 are "return is requested within 30 days of delivery".
+
+These are phrase coincidences, not copied items. No stylistic near-copies of DecideBench items were found.
+
+**Other results:**
+- Soft labels: 8.3% of final rows.
+- Every family kept 19–20 of its 20 clusters.
+- Edit types that lost the most rows at attribution: exception (41 → 34), negation (99 → 89) and entity_swap (97 → 87).
+
+### Cost
+
+- **Subagent dispatches:** 50 in total (20 writers, 24 checkers, 6 attributors), all on Opus.
+- **Wall time** at 5 concurrent: writers 908 s, checkers 239 s, attribution 90 s.
+- **Tokens:** 3.61M in total, or about 5.3k per final row.
+  - Writers: 1.26M, about 60k per batch of 10 clusters.
+  - Checkers: 1.83M, about 75k per ~90 items.
+  - Attribution: 0.52M.
+- **Why so high:** the per-dispatch fixed overhead dominates. A checker that answers 90 short items still costs about 75k tokens.
+
+### Carry to Plan 2b
+
+- **Bigger batches before scaling:** about 25 clusters per writer and about 250 items per checker part. This should cut cost per row by roughly 2–3×, which Plan 2b must verify.
+- **Projection at pilot efficiency:** Stage 1's 20k LLM rows would take about 105M tokens, about 1,460 dispatches and about 10 hours at 5 concurrent.
+- **Opus-checks-Opus agreement is very high** (98.6% of rows kept at the blind check). Treat soft labels and survival as optimistic. Spot-check a sample by hand, or with a non-Claude open model, before Stage 1.
+- **Writer prompt:** ask for varied wording of "none of these" options, and discourage stock policy phrasing ("within 30 days of delivery").
+- **Sentiment family:** writers turned graded sentiment into rule-following ("pick the first option whose conditions hold"). Rewrite the family description so it asks for natural reviews rated by tone.
