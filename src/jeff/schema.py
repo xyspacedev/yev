@@ -42,6 +42,8 @@ class Decision:
     cluster_id: str | None = None
     edit_type: str | None = None
     weight: float = 1.0
+    # Provenance and attribution (e.g. upstream repo, path, licence). Omitted from JSON when None.
+    metadata: dict | None = None
 
     @property
     def keys(self) -> list[str]:
@@ -91,7 +93,10 @@ class Decision:
         return self
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        if d["metadata"] is None:
+            del d["metadata"]
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> Decision:
