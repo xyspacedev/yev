@@ -60,8 +60,8 @@ def render_state(team: str, symptom: str, c: SeverityCase) -> str:
 
 
 def generate_cluster(rng: random.Random, cluster_id: str) -> list[Decision]:
-    p = SeverityPolicy(medium=rng.choice([5, 10, 25]), high=rng.choice([100, 200, 500]),
-                       critical=rng.choice([1000, 2000, 5000]))
+    p = SeverityPolicy(medium=rng.randint(3, 40), high=rng.randint(60, 900),
+                       critical=rng.randint(1000, 9000))
     team, symptom = rng.choice(TEAMS), rng.choice(SYMPTOMS)
     base = SeverityCase("production", p.high, data_loss=False, workaround=False)
     required = (replace(base, users=p.high - 1), "threshold")

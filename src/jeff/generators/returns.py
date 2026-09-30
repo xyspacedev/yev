@@ -67,7 +67,7 @@ def render_state(template: int, shop: str, product: str, delivered: date, c: Ret
 
 
 def generate_cluster(rng: random.Random, cluster_id: str) -> list[Decision]:
-    p = ReturnPolicy(window=rng.choice([14, 21, 30, 45, 60]), grace=rng.choice([7, 10, 14, 30]),
+    p = ReturnPolicy(window=rng.randint(7, 90), grace=rng.randint(3, 30),
                      opened_ok=rng.random() < 0.3)
     shop, product = rng.choice(SHOPS), rng.choice(PRODUCTS)
     delivered = date(2025, 1, 1) + timedelta(days=rng.randrange(330))

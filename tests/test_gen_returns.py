@@ -53,3 +53,21 @@ def test_day_count_matches_printed_dates():
         n = int(re.search(r"(\d+) days after delivery", d.state).group(1))
         first, second = (datetime.strptime(x, "%d %B %Y") for x in dates)
         assert abs((second - first).days) == n
+
+
+def test_policy_edit_changes_only_options_by_a_small_amount():
+    seen = 0
+    for members in by_cluster(generate(200, seed=5)).values():
+        base = members[0]
+        for d in members[1:]:
+            if d.edit_type == "policy_edit":
+                seen += 1
+                assert d.state == base.state
+                total = sum(token_edit_size(a.description, b.description) for a, b in zip(base.options, d.options))
+                assert total <= 15
+    assert seen > 0
+
+
+def test_base_states_are_diverse():
+    bases = [m[0].state for m in by_cluster(generate(200, seed=1)).values()]
+    assert len(set(bases)) >= 190

@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-from jeff.generators.common import token_edit_size
+from jeff.generators.common import EDIT_TYPES, token_edit_size
 from jeff.generators.severity import SCALE, SeverityCase, SeverityPolicy, generate, severity_decision
 
 P = SeverityPolicy(medium=10, high=100, critical=1000)
@@ -29,3 +29,40 @@ def test_generated_score_clusters_keep_scale_order():
         for d in members[1:]:
             if d.edit_type != "policy_edit":
                 assert token_edit_size(members[0].state, d.state) <= 15
+
+
+def _by_cluster(ds):
+    out = defaultdict(list)
+    for d in ds:
+        out[d.cluster_id].append(d)
+    return out
+
+
+def test_policy_edit_changes_only_options_by_a_small_amount():
+    seen = 0
+    for members in _by_cluster(generate(200, seed=5)).values():
+        base = members[0]
+        for d in members[1:]:
+            if d.edit_type == "policy_edit":
+                seen += 1
+                assert d.state == base.state
+                total = sum(token_edit_size(a.description, b.description) for a, b in zip(base.options, d.options))
+                assert total <= 15
+    assert seen > 0
+
+
+def test_base_states_are_diverse():
+    bases = [m[0].state for m in _by_cluster(generate(200, seed=1)).values()]
+    assert len(set(bases)) >= 190
+
+
+def test_severity_metadata_and_option_sharing():
+    for members in _by_cluster(generate(60, seed=4)).values():
+        base = members[0]
+        assert base.edit_type is None
+        for d in members:
+            assert d.source == "synthetic_rules" and d.licence == "cc-by-4.0"
+        for d in members[1:]:
+            assert d.edit_type in EDIT_TYPES
+            if d.edit_type != "policy_edit":
+                assert d.options == base.options

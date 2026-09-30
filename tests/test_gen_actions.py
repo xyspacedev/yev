@@ -37,3 +37,28 @@ def test_generated_clusters_valid_and_small_edits():
                 assert d.state == base.state
             else:
                 assert token_edit_size(base.state, d.state) <= 15, (base.state, d.state)
+
+
+def _clusters(ds):
+    out = defaultdict(list)
+    for d in ds:
+        out[d.cluster_id].append(d)
+    return out
+
+
+def test_policy_edit_changes_only_options_by_a_small_amount():
+    seen = 0
+    for members in _clusters(generate(200, seed=5)).values():
+        base = members[0]
+        for d in members[1:]:
+            if d.edit_type == "policy_edit":
+                seen += 1
+                assert d.state == base.state
+                total = sum(token_edit_size(a.description, b.description) for a, b in zip(base.options, d.options))
+                assert total <= 15
+    assert seen > 0
+
+
+def test_base_states_are_diverse():
+    bases = [m[0].state for m in _clusters(generate(200, seed=1)).values()]
+    assert len(set(bases)) >= 190
