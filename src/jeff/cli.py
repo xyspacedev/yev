@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 from collections import defaultdict
 from collections import Counter
@@ -142,6 +143,25 @@ def _write_json(path: Path, obj) -> None:
     _write_stats_atomically(path, obj)
 
 
+def _clear(run: Path, *rels: str) -> None:
+    """Remove files/dirs under run; refuses anything resolving outside it."""
+    root = run.resolve()
+    for rel in rels:
+        target = (root / rel).resolve()
+        if target == root or root not in target.parents:
+            raise ValueError(f"refusing to remove {target}: outside {root}")
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists() or target.is_symlink():
+            target.unlink()
+
+
+def _coverage(key: dict, answers: list[dict], field: str) -> tuple[int, int]:
+    expected = {k for k in key if k != "_no_base"}
+    got = {str(a.get(field, "")) for a in answers} & expected
+    return len(got), len(expected)
+
+
 def _read_answer_lines(paths) -> tuple[list[dict], int]:
     answers, bad = [], 0
     for path in paths:
@@ -167,7 +187,14 @@ def _dump_items(path: Path, items: list[dict]) -> None:
 
 def cmd_synth_plan(args) -> int:
     run = Path(args.dir)
-    for b in plan_batches(args.clusters, args.per_batch, args.seed):
+    _clear(run, "batches")
+    planned = plan_batches(args.clusters, args.per_batch, args.seed)
+    (run / "written").mkdir(parents=True, exist_ok=True)
+    live = {b["batch_id"] for b in planned}
+    for stale in (run / "written").glob("*.jsonl"):
+        if stale.stem not in live:
+            stale.unlink()
+    for b in planned:
         spec_path = run / "batches" / f"{b['batch_id']}.json"
         spec_path.parent.mkdir(parents=True, exist_ok=True)
         spec_path.write_text(json.dumps(b, indent=2))
@@ -179,6 +206,8 @@ def cmd_synth_plan(args) -> int:
 
 def cmd_synth_ingest(args) -> int:
     run = Path(args.dir)
+    _clear(run, "ingested.jsonl", "checked.jsonl", "final", "check", "attrib", "private",
+           "reports/check.json", "reports/attrib.json", "reports/pilot.json")
     rows, stats = [], Counter()
     for spec_path in sorted((run / "batches").glob("*.json")):
         b = json.loads(spec_path.read_text())
@@ -198,6 +227,11 @@ def cmd_synth_ingest(args) -> int:
 
 def cmd_synth_check_prepare(args) -> int:
     run = Path(args.dir)
+    if not (run / "ingested.jsonl").exists():
+        print(f"missing {run / 'ingested.jsonl'}; run synth ingest first")
+        return 2
+    _clear(run, "check", "checked.jsonl", "attrib", "private", "final",
+           "reports/check.json", "reports/attrib.json", "reports/pilot.json")
     parts, key = prepare_sheets(list(read_jsonl(run / "ingested.jsonl")), n_sheets=args.sheets,
                                 part_size=args.part_size, seed=args.seed)
     for name, items in parts:
@@ -212,10 +246,22 @@ def cmd_synth_check_prepare(args) -> int:
 
 def cmd_synth_check_score(args) -> int:
     run = Path(args.dir)
+    for need in (run / "private" / "check-key.json", run / "ingested.jsonl"):
+        if not need.exists():
+            print(f"error: missing {need}")
+            return 2
     key = json.loads((run / "private" / "check-key.json").read_text())
     answers, bad = _read_answer_lines(sorted((run / "check").glob("answers-*.jsonl")))
+    n, m = _coverage(key, answers, "item_id")
+    print(f"answered {n} of {m}")
+    if n == 0:
+        print("error: no answers found")
+        return 2
     kept, stats = score_answers(list(read_jsonl(run / "ingested.jsonl")), key, answers)
     stats["bad_answer_line"] = bad
+    stats["answered"], stats["expected"] = n, m
+    if n < m:
+        print(f"WARNING: only {n} of {m} check items answered")
     write_jsonl(run / "checked.jsonl", kept)
     _write_json(run / "reports" / "check.json", dict(stats))
     print(json.dumps(dict(stats)))
@@ -224,6 +270,11 @@ def cmd_synth_check_score(args) -> int:
 
 def cmd_synth_attrib_prepare(args) -> int:
     run = Path(args.dir)
+    if not (run / "checked.jsonl").exists():
+        print(f"missing {run / 'checked.jsonl'}; run synth check-score first")
+        return 2
+    _clear(run, "attrib", "private/attrib-key.json", "final",
+           "reports/attrib.json", "reports/pilot.json")
     parts, key = prepare_pairs(list(read_jsonl(run / "checked.jsonl")), part_size=args.part_size, seed=args.seed)
     for name, items in parts:
         path = (run / "attrib" / f"{name}.jsonl").resolve()
@@ -237,11 +288,23 @@ def cmd_synth_attrib_prepare(args) -> int:
 
 def cmd_synth_attrib_score(args) -> int:
     run = Path(args.dir)
+    for need in (run / "private" / "attrib-key.json", run / "checked.jsonl", run / "reports" / "ingest.json"):
+        if not need.exists():
+            print(f"error: missing {need}")
+            return 2
     key = json.loads((run / "private" / "attrib-key.json").read_text())
     answers, bad = _read_answer_lines(sorted((run / "attrib").glob("answers-*.jsonl")))
+    n, m = _coverage(key, answers, "pair_id")
+    print(f"answered {n} of {m}")
+    if n == 0 and m > 0:
+        print("error: no answers found")
+        return 2
     checked = list(read_jsonl(run / "checked.jsonl"))
     kept, stats = score_attribution(checked, key, answers)
     stats["bad_answer_line"] = bad
+    stats["answered"], stats["expected"] = n, m
+    if n < m:
+        print(f"WARNING: only {n} of {m} attribution pairs answered")
     write_jsonl(run / "final" / "synthetic_opus.jsonl", kept)
     _write_json(run / "reports" / "attrib.json", dict(stats))
     ingest = json.loads((run / "reports" / "ingest.json").read_text())
@@ -301,7 +364,8 @@ def make_parser() -> argparse.ArgumentParser:
                        ("attrib-prepare", cmd_synth_attrib_prepare), ("attrib-score", cmd_synth_attrib_score)]:
         p = ssub.add_parser(name)
         p.add_argument("--dir", required=True)
-        p.add_argument("--seed", type=int, default=0)
+        if name in ("plan", "check-prepare", "attrib-prepare"):
+            p.add_argument("--seed", type=int, default=0)
         p.set_defaults(func=func)
         if name == "plan":
             p.add_argument("--clusters", type=int, required=True)

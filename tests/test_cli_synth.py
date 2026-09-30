@@ -29,7 +29,7 @@ def test_synth_end_to_end_with_simulated_subagents(tmp_path):
     # simulated writer: one valid cluster per batch
     opts = [{"key": "yes_ok", "description": "Allowed when under the limit."},
             {"key": "no_way", "description": "Refused when over the limit."}]
-    (run / "written").mkdir()
+    (run / "written").mkdir(exist_ok=True)
     for p in specs:
         b = json.loads(p.read_text())
         line = {"question": "What happens?", "options": opts,
@@ -67,3 +67,74 @@ def test_synth_end_to_end_with_simulated_subagents(tmp_path):
     pilot = json.loads((run / "reports" / "pilot.json").read_text())
     assert pilot["planned_clusters"] == 2 and pilot["final_clusters"] == 2
     assert pilot["final_rows_by_edit_type"] == {"base": 2, "threshold": 2}
+
+
+def _pipeline_to_check(run, answer_all=True):
+    cli.main(["synth", "plan", "--dir", str(run), "--clusters", "2", "--per-batch", "1"])
+    opts = [{"key": "yes_ok", "description": "Allowed when under the limit."},
+            {"key": "no_way", "description": "Refused when over the limit."}]
+    for p in sorted((run / "batches").glob("*.json")):
+        b = json.loads(p.read_text())
+        line = {"question": "What happens?", "options": opts,
+                "base": {"state": "The request is for 40 units, under the 50 unit limit.", "gold": "yes_ok"},
+                "variants": [{"state": "The request is for 60 units, under the 50 unit limit.", "gold": "no_way",
+                              "edit_type": "threshold", "edit": "40->60"}],
+                "policy_variants": []}
+        (run / "written" / f"{b['batch_id']}.jsonl").write_text(json.dumps(line) + "\n")
+    cli.main(["synth", "ingest", "--dir", str(run)])
+    cli.main(["synth", "check-prepare", "--dir", str(run)])
+
+
+def _answer_sheets(run, limit=None):
+    key = json.loads((run / "private" / "check-key.json").read_text())
+    gold = {json.loads(l)["id"]: json.loads(l)["gold"] for l in (run / "ingested.jsonl").read_text().splitlines()}
+    n = 0
+    for sheet in sorted((run / "check").glob("sheet-*.jsonl")):
+        out = []
+        for line in sheet.read_text().splitlines():
+            if limit is not None and n >= limit:
+                break
+            it = json.loads(line)
+            k = key[it["item_id"]]
+            letter = next(l for l, ok in k["letters"].items() if ok == gold[k["decision"]])
+            out.append(json.dumps({"item_id": it["item_id"], "letter": letter}))
+            n += 1
+        (run / "check" / f"answers-{sheet.stem}.jsonl").write_text("\n".join(out) + "\n")
+
+
+def test_check_prepare_rerun_removes_old_answers(tmp_path):
+    run = tmp_path / "run"
+    _pipeline_to_check(run)
+    _answer_sheets(run)
+    assert list((run / "check").glob("answers-*.jsonl"))
+    assert cli.main(["synth", "check-prepare", "--dir", str(run)]) == 0
+    assert not list((run / "check").glob("answers-*.jsonl"))
+
+
+def test_check_score_without_answers_fails(tmp_path):
+    run = tmp_path / "run"
+    _pipeline_to_check(run)
+    assert cli.main(["synth", "check-score", "--dir", str(run)]) == 2
+    assert not (run / "checked.jsonl").exists()
+
+
+def test_check_score_partial_answers_recorded(tmp_path):
+    run = tmp_path / "run"
+    _pipeline_to_check(run)
+    _answer_sheets(run, limit=3)
+    assert cli.main(["synth", "check-score", "--dir", str(run)]) == 0
+    rep = json.loads((run / "reports" / "check.json").read_text())
+    assert rep["answered"] == 3 and rep["answered"] < rep["expected"]
+
+
+def test_ingest_rerun_removes_downstream(tmp_path):
+    run = tmp_path / "run"
+    _pipeline_to_check(run)
+    _answer_sheets(run)
+    assert cli.main(["synth", "check-score", "--dir", str(run)]) == 0
+    (run / "final").mkdir()
+    (run / "final" / "x.jsonl").write_text("")
+    assert (run / "checked.jsonl").exists()
+    assert cli.main(["synth", "ingest", "--dir", str(run)]) == 0
+    assert not (run / "checked.jsonl").exists() and not (run / "final").exists()
+    assert not (run / "check").exists() and not (run / "private").exists()
