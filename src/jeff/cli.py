@@ -76,7 +76,7 @@ def cmd_build_public(args: argparse.Namespace) -> int:
         if args.only and spec.name not in args.only:
             continue
         try:
-            decisions, stats = build(spec, fetch(spec), seed=args.seed)
+            decisions, stats = build(spec, fetch(spec), seed=args.seed, natural=args.natural, pool_scale=args.pool_scale)
             write_jsonl(out / f"{spec.name}.jsonl", decisions)
             all_stats[spec.name] = asdict(stats)
             print(f"{spec.name}: {asdict(stats)}")
@@ -382,6 +382,8 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True)
     p.add_argument("--only", nargs="+")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--natural", action="store_true", help="sample with natural label priors (calibration)")
+    p.add_argument("--pool-scale", type=float, default=1.0)
     p.set_defaults(func=cmd_build_public)
 
     p = sub.add_parser("dev", help="write the DecideBench examples pool as the dev set")

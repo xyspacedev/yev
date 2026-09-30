@@ -83,6 +83,21 @@ def sample_pool(decisions: Iterable[Decision], n: int, seed: int) -> list[Decisi
     return out
 
 
+def sample_natural(decisions: Iterable[Decision], n: int, seed: int) -> list[Decision]:
+    """Sample whole units (cluster or row) at random until ~n rows, keeping natural label priors."""
+    units: dict[str, list[Decision]] = {}
+    for d in decisions:
+        units.setdefault(d.cluster_id or d.id, []).append(d)
+    order = sorted(units)
+    random.Random(f"{seed}:natural").shuffle(order)
+    out: list[Decision] = []
+    for key in order:
+        if len(out) >= n:
+            break
+        out.extend(units[key])
+    return out
+
+
 def _label_universe(rows: list[dict], column: str) -> list[str]:
     labels: set[str] = set()
     for row in rows:
@@ -94,7 +109,9 @@ def _label_universe(rows: list[dict], column: str) -> list[str]:
     return sorted(labels)
 
 
-def build(spec: SourceSpec, rows: Iterable[dict], seed: int = 0) -> tuple[list[Decision], BuildStats]:
+def build(
+    spec: SourceSpec, rows: Iterable[dict], seed: int = 0, *, natural: bool = False, pool_scale: float = 1.0
+) -> tuple[list[Decision], BuildStats]:
     licences.check(spec.hf_id, spec.licence, config=spec.config, split=spec.split, data_files=spec.data_files)
     rows = list(rows)
     labels = _label_universe(rows, spec.label_column) if spec.label_column else []
@@ -139,7 +156,8 @@ def build(spec: SourceSpec, rows: Iterable[dict], seed: int = 0) -> tuple[list[D
     stats.skipped += len(converted) - len(filtered)
     converted = filtered
     stats.converted = len(converted)
-    kept = sample_pool(converted, spec.pool_size, seed)
+    target = max(1, int(spec.pool_size * pool_scale))
+    kept = (sample_natural if natural else sample_pool)(converted, target, seed)
     stats.kept = len(kept)
     return kept, stats
 
