@@ -4,7 +4,9 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+import os
 import random
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -142,19 +144,28 @@ def _batch_loss(cfg, model, items, letter_ids, pad_id, device):
 
 
 def _latest_checkpoint(out: Path):
-    cks = sorted(out.glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))
+    """Newest complete checkpoint; skips *.tmp and directories without state.pt (interrupted saves)."""
+    cks = [p for p in out.glob("checkpoint-*")
+           if p.is_dir() and p.name.split("-", 1)[1].isdigit() and (p / "state.pt").exists()]
+    cks.sort(key=lambda p: int(p.name.split("-", 1)[1]))
     return cks[-1] if cks else None
 
 
 def _save(model, opt, sched, step, out: Path, cfg, name=None):
-    d = out / (name or f"checkpoint-{step}")
-    d.mkdir(parents=True, exist_ok=True)
+    final = out / (name or f"checkpoint-{step}")
+    d = final.with_name(final.name + ".tmp")  # written whole, then renamed, so a kill mid-save leaves no partial dir
+    if d.exists():
+        shutil.rmtree(d)
+    d.mkdir(parents=True)
     model.save_pretrained(d)
     torch.save({"opt": opt.state_dict(), "sched": sched.state_dict(), "step": step,
                 "rng": random.getstate(), "torch_rng": torch.get_rng_state(),
                 "cuda_rng": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None}, d / "state.pt")
     # config.json belongs to save_pretrained for a full model; the run config sits beside it.
     (d / "train_config.json").write_text(json.dumps(dataclasses.asdict(cfg), indent=2))
+    if final.exists():
+        shutil.rmtree(final)
+    os.replace(d, final)
 
 
 def _load_checkpoint(cfg, model, ck: Path):

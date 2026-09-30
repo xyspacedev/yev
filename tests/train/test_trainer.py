@@ -59,3 +59,22 @@ def test_lora_train_and_resume(tmp_path, tok, tiny_model, make_row):
     again = train(cfg(tmp_path, max_steps=4, **kw), tokenizer=tok, model=fresh)
     assert again["steps"] == 4 and again["resumed_from"] == 2
     assert (tmp_path / "out" / "final" / "adapter_config.json").exists()
+
+def test_resume_skips_incomplete_checkpoint(tmp_path, tok, tiny_model, make_row):
+    write_rows(tmp_path / "train.jsonl", make_row)
+    first = train(cfg(tmp_path, max_steps=2), tokenizer=tok, model=tiny_model)
+    assert first["steps"] == 2
+    out = tmp_path / "out"
+    assert not list(out.glob("*.tmp"))
+    broken = out / "checkpoint-99"; broken.mkdir()
+    (broken / "adapter_model.safetensors").write_bytes(b"partial")
+    (out / "checkpoint-150.tmp").mkdir()
+    again = train(cfg(tmp_path, max_steps=4), tokenizer=tok, model=tiny_model)
+    assert again["resumed_from"] == 2 and again["steps"] == 4
+
+def test_resume_starts_fresh_when_only_incomplete(tmp_path, tok, tiny_model, make_row):
+    write_rows(tmp_path / "train.jsonl", make_row)
+    broken = tmp_path / "out" / "checkpoint-99"; broken.mkdir(parents=True)
+    (broken / "adapter_model.safetensors").write_bytes(b"partial")
+    out = train(cfg(tmp_path, max_steps=2), tokenizer=tok, model=tiny_model)
+    assert out["resumed_from"] is None and out["steps"] == 2

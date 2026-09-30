@@ -97,21 +97,29 @@ def encode_all(rows, tokenizer, max_len_plain, max_len_examples, eps_hard, eps_o
     return out, stats
 
 
-def build_batches(encoded: list[dict], token_budget: int, seed: int) -> list[list[int]]:
+def build_batches(encoded: list[dict], token_budget: int, seed: int, window: int = 50) -> list[list[int]]:
+    """Pack whole units into batches whose padded size (rows x longest row) stays within token_budget.
+
+    Units are shuffled with `seed`, then sorted by length inside windows of `window` units so rows of
+    similar length share a batch. A unit that alone exceeds the budget becomes its own batch.
+    Deterministic for a given seed.
+    """
     groups: dict[str, list[int]] = {}
     for i, e in enumerate(encoded):
         groups.setdefault(e["unit"], []).append(i)
     order = sorted(groups)
     random.Random(seed).shuffle(order)
-    batches, cur, cur_tok = [], [], 0
+    longest = {u: max(len(encoded[i]["input_ids"]) for i in groups[u]) for u in order}
+    order = [u for w in range(0, len(order), window) for u in sorted(order[w:w + window], key=longest.__getitem__)]
+    batches, cur, cur_max = [], [], 0
     for u in order:
         idx = groups[u]
-        size = sum(len(encoded[i]["input_ids"]) for i in idx)
-        if cur and cur_tok + size > token_budget:
+        new_max = max(cur_max, longest[u])
+        if cur and (len(cur) + len(idx)) * new_max > token_budget:
             batches.append(cur)
-            cur, cur_tok = [], 0
+            cur, new_max = [], longest[u]
         cur.extend(idx)
-        cur_tok += size
+        cur_max = new_max
     if cur:
         batches.append(cur)
     return batches

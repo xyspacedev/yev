@@ -43,3 +43,29 @@ def test_batches_keep_units_and_twins_together(tok, make_row):
     for i, e in enumerate(enc):
         mates = [k for k, f in enumerate(enc) if f["unit"] == e["unit"]]
         assert {where[k] for k in mates} == {where[i]}
+
+def _fake_enc(lengths_by_unit):
+    enc = []
+    for u, lens in lengths_by_unit.items():
+        for n in lens:
+            enc.append({"unit": u, "input_ids": [1] * n})
+    return enc
+
+def test_batches_padded_size_within_budget():
+    rng = random.Random(1)
+    units = {f"u{k}": [rng.choice([20, 30, 60, 4096 if k % 37 == 0 else 50])] * rng.choice([1, 2, 3]) for k in range(300)}
+    enc = _fake_enc(units)
+    budget = 1000
+    batches = build_batches(enc, token_budget=budget, seed=0)
+    assert sorted(i for b in batches for i in b) == list(range(len(enc)))
+    for b in batches:
+        padded = len(b) * max(len(enc[i]["input_ids"]) for i in b)
+        if padded > budget:
+            assert len({enc[i]["unit"] for i in b}) == 1
+    assert build_batches(enc, token_budget=budget, seed=0) == batches
+    assert build_batches(enc, token_budget=budget, seed=1) != batches
+
+def test_long_row_does_not_inflate_short_batch():
+    enc = _fake_enc({"long": [4096], **{f"s{k}": [100] for k in range(25)}})
+    for b in build_batches(enc, token_budget=4096, seed=0):
+        assert len(b) * max(len(enc[i]["input_ids"]) for i in b) <= 4096
