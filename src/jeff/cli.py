@@ -22,6 +22,7 @@ from jeff.filters.contamination import (
     sentence_transformer_encoder,
 )
 from jeff.filters.pipeline import assert_clean, run_filters
+from jeff.filters.shortcut import run_shortcut
 from jeff.generators import actions, returns, severity
 from jeff.generators.common import EDIT_TYPES
 from jeff.generators.llm.attrib import prepare_pairs, render_attrib_prompt, score_attribution
@@ -136,6 +137,30 @@ def cmd_filter(args: argparse.Namespace) -> int:
         "sources": report,
     }
     _write_stats_atomically(out / "filter_report.json", report)
+    print(json.dumps(report, indent=2))
+    return 0
+
+
+def cmd_shortcut(args: argparse.Namespace) -> int:
+    src, out = Path(args.inp), Path(args.out)
+    if src.resolve() == out.resolve():
+        print("--in and --out must be different directories")
+        return 2
+    files = sorted(src.glob("*.jsonl"))
+    if not files:
+        print(f"no *.jsonl files found in {src}")
+        return 2
+    decisions = [d for path in files for d in read_jsonl(path)]
+    kept, report = run_shortcut(decisions, min_rows=args.min_rows, threshold=args.threshold)
+    by_source: dict[str, list] = defaultdict(list)
+    for d in kept:
+        by_source[d.source].append(d)
+    out.mkdir(parents=True, exist_ok=True)
+    for stale in [*out.glob("*.jsonl"), *out.glob("*.jsonl.tmp")]:
+        stale.unlink()
+    for source, rows in by_source.items():
+        write_jsonl(out / f"{source}.jsonl", rows)
+    _write_stats_atomically(out / "shortcut_report.json", report)
     print(json.dumps(report, indent=2))
     return 0
 
@@ -395,6 +420,13 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True)
     p.add_argument("--no-embed", action="store_true", help="skip the embedding filter (tests only)")
     p.set_defaults(func=cmd_filter)
+
+    p = sub.add_parser("shortcut", help="down-weight shortcut-solvable public rows, drop solved synthetic clusters")
+    p.add_argument("--in", dest="inp", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--threshold", type=float, default=0.9)
+    p.add_argument("--min-rows", type=int, default=50)
+    p.set_defaults(func=cmd_shortcut)
 
     p = sub.add_parser("gen-rules", help="generate rule-based contrastive clusters")
     p.add_argument("--family", required=True, choices=sorted(RULE_GENERATORS))
