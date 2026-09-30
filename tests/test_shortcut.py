@@ -1,8 +1,9 @@
 import json
+from dataclasses import replace
 import random
 
 from jeff import cli
-from jeff.filters.shortcut import apply_shortcut, lexical_scores, masked_input, run_shortcut, shortcut_scores
+from jeff.filters.shortcut import apply_shortcut, detector_scores, lexical_scores, masked_input, run_shortcut, shortcut_scores
 from jeff.schema import Decision, Option, read_jsonl, write_jsonl
 
 OPTS = [Option("approve", "Approve the request."), Option("deny", "Deny the request.")]
@@ -40,7 +41,7 @@ def test_keyword_shortcut_is_found_and_public_rows_downweighted():
     ds = keyword_rows()
     scores = shortcut_scores(ds)
     assert sum(ok for _, ok in scores) / len(ds) > 0.9
-    kept, report = apply_shortcut(ds, scores)
+    kept, report = apply_shortcut(ds, detector_scores(ds))
     assert len(kept) == len(ds)
     assert report["toy_public"]["downweighted"] > 0.8 * len(ds)
     assert all(d.weight in (1.0, 0.3) for d in kept)
@@ -79,3 +80,26 @@ def test_cli_shortcut_writes_files_and_report(tmp_path):
     assert json.loads((out / "shortcut_report.json").read_text())["toy_public"]["in"] == 120
     assert cli.main(["shortcut", "--in", str(src), "--out", str(src)]) == 2
     assert cli.main(["shortcut", "--in", str(tmp_path / "empty"), "--out", str(out)]) == 2
+
+
+def test_masked_twin_cluster_with_different_golds_is_never_dropped():
+    twins = [row(0, "approve", "Order 11 arrived on day 3.", "synthetic_rules", "k0"),
+             row(1, "deny", "Order 12 arrived on day 4.", "synthetic_rules", "k0")]
+    solved, unsolved = (1.0, True), (0.5, False)
+    for det in ([(solved, unsolved)] * 2, [(unsolved, solved)] * 2, [(solved, unsolved), (unsolved, solved)]):
+        kept, report = apply_shortcut(twins, det)
+        assert len(kept) == 2 and report["synthetic_rules"]["dropped"] == 0
+    # same gold on masked twins is fine to drop
+    same = [twins[0], replace(twins[1], gold="approve")]
+    assert apply_shortcut(same, [(solved, unsolved)] * 2)[0] == []
+
+
+def test_mixed_detector_cluster_is_not_dropped():
+    ds = [row(0, "approve", "a", "synthetic_rules", "k0"), row(1, "deny", "b", "synthetic_rules", "k0")]
+    solved, unsolved = (1.0, True), (0.5, False)
+    kept, _ = apply_shortcut(ds, [(solved, unsolved), (unsolved, solved)])
+    assert len(kept) == 2
+    kept, report = apply_shortcut(ds, [(solved, unsolved), (solved, unsolved)])
+    assert kept == [] and report["synthetic_rules"]["solved_key_prior"] == 2
+    kept, report = apply_shortcut(ds, [(unsolved, solved), (unsolved, solved)])
+    assert kept == [] and report["synthetic_rules"]["solved_lexical"] == 2

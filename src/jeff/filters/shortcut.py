@@ -95,24 +95,47 @@ def _best(a: Score, b: Score) -> Score:
     return max(solved) if solved else max(a, b)
 
 
+def detector_scores(decisions: list[Decision], n_folds: int = 5) -> list[tuple[Score, Score]]:
+    """Per row: (key_prior, lexical). Kept separate because no single text-only model combines them."""
+    return list(zip(key_prior_scores(decisions, n_folds), lexical_scores(decisions)))
+
+
 def shortcut_scores(decisions: list[Decision], n_folds: int = 5) -> list[Score]:
-    return [_best(a, b) for a, b in zip(key_prior_scores(decisions, n_folds), lexical_scores(decisions))]
+    return [_best(a, b) for a, b in detector_scores(decisions, n_folds)]
+
+
+def _signature(d: Decision) -> tuple:
+    return (_mask(d.state), _mask(d.question), tuple(sorted(_mask(o.description) for o in d.options)))
 
 
 def apply_shortcut(
-    decisions: list[Decision], scores: list[Score], *, threshold: float = 0.9, public_weight: float = 0.3
+    decisions: list[Decision], detectors: list[tuple[Score, Score]], *, threshold: float = 0.9,
+    public_weight: float = 0.3,
 ) -> tuple[list[Decision], dict]:
-    solved: dict[str, list[bool]] = defaultdict(list)
-    for d, (_, ok) in zip(decisions, scores):
+    scores = [_best(kp, lex) for kp, lex in detectors]
+    members: dict[str, list[int]] = defaultdict(list)
+    for i, d in enumerate(decisions):
         if d.source.startswith(SYNTHETIC_PREFIX) and d.cluster_id:
-            solved[d.cluster_id].append(ok)
-    doomed = {c for c, oks in solved.items() if len(oks) >= 2 and all(oks)}
+            members[d.cluster_id].append(i)
+    doomed: set[str] = set()
+    for c, idx in members.items():
+        if len(idx) < 2:
+            continue
+        golds_by_sig: dict[tuple, set[str]] = defaultdict(set)
+        for i in idx:
+            golds_by_sig[_signature(decisions[i])].add(decisions[i].gold)
+        if any(len(g) > 1 for g in golds_by_sig.values()):
+            continue  # a masked twin with another gold: no text-only model can solve this cluster
+        if all(detectors[i][0][1] for i in idx) or all(detectors[i][1][1] for i in idx):
+            doomed.add(c)
     report: dict[str, Counter] = defaultdict(Counter)
     kept: list[Decision] = []
-    for d, (p, ok) in zip(decisions, scores):
+    for d, (p, ok), (kp, lex) in zip(decisions, scores, detectors):
         r = report[d.source]
         r["in"] += 1
         r["shortcut_correct"] += int(ok)
+        r["solved_key_prior"] += int(kp[1])
+        r["solved_lexical"] += int(lex[1])
         if d.source.startswith(SYNTHETIC_PREFIX) and d.cluster_id in doomed:
             r["dropped"] += 1
             continue
@@ -121,7 +144,7 @@ def apply_shortcut(
             r["downweighted"] += 1
         r["out"] += 1
         kept.append(d)
-    keys = ("in", "shortcut_correct", "downweighted", "dropped", "out")
+    keys = ("in", "shortcut_correct", "solved_key_prior", "solved_lexical", "downweighted", "dropped", "out")
     return kept, {s: {k: c.get(k, 0) for k in keys} for s, c in report.items()}
 
 
@@ -132,10 +155,10 @@ def run_shortcut(
     for i, d in enumerate(decisions):
         key = f"{d.source}/{d.family}" if d.source.startswith(SYNTHETIC_PREFIX) else d.source
         groups[key].append(i)
-    scores = _uniform(decisions)
+    detectors = [(u, u) for u in _uniform(decisions)]
     for idx in groups.values():
         if len(idx) < min_rows:
             continue
-        for i, s in zip(idx, shortcut_scores([decisions[i] for i in idx])):
-            scores[i] = s
-    return apply_shortcut(decisions, scores, threshold=threshold, public_weight=public_weight)
+        for i, pair in zip(idx, detector_scores([decisions[i] for i in idx])):
+            detectors[i] = pair
+    return apply_shortcut(decisions, detectors, threshold=threshold, public_weight=public_weight)
