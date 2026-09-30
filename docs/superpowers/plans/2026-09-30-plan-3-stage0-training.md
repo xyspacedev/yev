@@ -13,7 +13,7 @@
 
 A plain PyTorch training loop (`trainer`) ties these together. An `infer` module runs a model over chat rows for eval and calibration. Everything is testable locally with a tiny randomly-initialised model and a fake tokenizer. The real runs happen on the GPU box via `scripts/aws/*.sh`, which read the host and key from environment variables.
 
-**Tech Stack:** Python ≥ 3.11, torch ≥ 2.9, transformers ≥ 5.0, peft ≥ 0.17, tensorboard. uv locally; a venv on the box built from the DLAMI's `/opt/pytorch`.
+**Tech Stack:** Python ≥ 3.11, torch ≥ 2.9, transformers ≥ 5.0, peft ≥ 0.17, tensorboard. uv locally; an isolated venv on the box (torch cu130).
 
 **Spec:** `docs/superpowers/specs/2026-09-29-jeff-4b-system-one-design.md` (§5 Training, §6 Readout, §7 Evaluation).
 
@@ -1127,7 +1127,7 @@ Adjust only what the tests prove necessary. For example, `save_pretrained` on a 
   - rsyncs `data/mix/stage0/` and `data/dev/decidebench_examples.jsonl` to `~/jeff/data/…`;
   - never sends anything else under `data/`.
 - `run.sh <cmd…>`: same env checks. It runs `cd ~/jeff && ~/venv/bin/pip install -q -e '.[train]' --no-deps && <cmd>` over ssh inside `nohup … > ~/runs/<first arg basename>.log 2>&1 &` when `--bg` is the first argument, and in the foreground otherwise.
-- `setup.sh`: the remote venv recipe that was already run on the box (a venv from `/opt/pytorch` with system site packages, pip install of the `train` extra's packages, and `hf download Qwen/Qwen3.5-4B-Base --local-dir ~/models/Qwen3.5-4B-Base`). Kept so the box can be rebuilt.
+- `setup.sh`: the remote venv recipe already run on the box. It builds an **isolated** venv (no system site packages: Ubuntu's `cryptography` and `pyOpenSSL` break transformers' imports) from `/opt/pytorch/bin/python`, then runs `pip install torch --index-url https://download.pytorch.org/whl/cu130` and the `train` extra's packages, then `hf download Qwen/Qwen3.5-4B-Base --local-dir ~/models/Qwen3.5-4B-Base`. It is kept so the box can be rebuilt.
 
 - [ ] **Step 1: Write the failing test.** Both scripts exit 2 when the environment variables are unset, and no script contains an IP address or a `.pem` path.
 
