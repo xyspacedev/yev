@@ -159,3 +159,20 @@ def test_build_makes_duplicate_ids_unique_in_production_order():
     assert by_state == {"one": "toy:x", "two": "toy:x#2", "three": "toy:x#3"}
     out2, _ = build(spec(convert), [{"s": "one"}, {"s": "two"}, {"s": "three"}])
     assert {d.state: d.id for d in out2} == by_state
+
+
+def test_max_scan_samples_shuffled_rows_not_the_head(monkeypatch):
+    import datasets
+
+    seen = {}
+
+    def fake_load_dataset(hf_id, config, split, revision=None, data_files=None):
+        seen["split"] = split
+        return datasets.Dataset.from_list([{"x": i} for i in range(10)])
+
+    monkeypatch.setattr(datasets, "load_dataset", fake_load_dataset)
+    rows = list(fetch(spec(lambda *a: [], max_scan=3)))
+    assert seen["split"] == "train"
+    assert len(rows) == 3 and [r["x"] for r in rows] != [0, 1, 2]
+    assert [r["x"] for r in fetch(spec(lambda *a: [], max_scan=50))] != list(range(10))  # capped at len, still shuffled
+    assert len(list(fetch(spec(lambda *a: [], max_scan=50)))) == 10

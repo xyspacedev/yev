@@ -15,6 +15,8 @@ from jeff.schema import Decision
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
 NGRAM = 8
+EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+EMBED_THRESHOLD = 0.85
 
 
 def normalize_tokens(text: str) -> list[str]:
@@ -68,7 +70,7 @@ def _unit(m: np.ndarray) -> np.ndarray:
 
 
 class EmbeddingFilter:
-    def __init__(self, reference_texts: list[str], encode: Callable[[list[str]], np.ndarray], threshold: float = 0.85):
+    def __init__(self, reference_texts: list[str], encode: Callable[[list[str]], np.ndarray], threshold: float = EMBED_THRESHOLD):
         self.encode = encode
         self.threshold = threshold
         self.reference = _unit(encode(reference_texts))
@@ -78,7 +80,7 @@ class EmbeddingFilter:
         return (sims.max(axis=1) > self.threshold).tolist()
 
 
-def sentence_transformer_encoder(model: str = "BAAI/bge-small-en-v1.5") -> Callable[[list[str]], np.ndarray]:
+def sentence_transformer_encoder(model: str = EMBED_MODEL) -> Callable[[list[str]], np.ndarray]:
     from sentence_transformers import SentenceTransformer
 
     m = SentenceTransformer(model)

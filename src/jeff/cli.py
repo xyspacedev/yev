@@ -5,12 +5,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
 
 from jeff import decidebench
-from jeff.filters.contamination import EmbeddingFilter, load_fingerprints, sentence_transformer_encoder
+from jeff.filters.contamination import (
+    EMBED_MODEL,
+    EMBED_THRESHOLD,
+    EmbeddingFilter,
+    load_fingerprints,
+    sentence_transformer_encoder,
+)
 from jeff.filters.pipeline import assert_clean, run_filters
 from jeff.schema import read_jsonl, write_jsonl
 from jeff.sources.base import build, fetch
@@ -28,6 +35,16 @@ def _write_stats_atomically(stats_path: Path, all_stats: dict) -> None:
         if tmp_path.exists():
             tmp_path.unlink()
         raise
+
+
+def _git_sha() -> str | None:
+    try:
+        res = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parent,
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    sha = res.stdout.strip()
+    return sha if res.returncode == 0 and sha else None
 
 
 def cmd_build_public(args: argparse.Namespace) -> int:
@@ -72,7 +89,11 @@ def cmd_filter(args: argparse.Namespace) -> int:
     if src.resolve() == out.resolve():
         print("--in and --out must be different directories")
         return 2
-    decisions = [d for path in sorted(src.glob("*.jsonl")) for d in read_jsonl(path)]
+    files = sorted(src.glob("*.jsonl"))
+    if not files:
+        print(f"no *.jsonl files found in {src}")
+        return 2
+    decisions = [d for path in files for d in read_jsonl(path)]
     fp = load_fingerprints()
     embed = None if args.no_embed else EmbeddingFilter(fp.states, sentence_transformer_encoder())
     kept, report = run_filters(decisions, fp, embed, {s.name: s for s in SOURCES})
@@ -85,6 +106,15 @@ def cmd_filter(args: argparse.Namespace) -> int:
         stale.unlink()
     for source, rows in by_source.items():
         write_jsonl(out / f"{source}.jsonl", rows)
+    report = {
+        "meta": {
+            "embedding": None if args.no_embed else EMBED_MODEL,
+            "threshold": EMBED_THRESHOLD,
+            "decidebench_revision": decidebench.REVISION,
+            "git_sha": _git_sha(),
+        },
+        "sources": report,
+    }
     _write_stats_atomically(out / "filter_report.json", report)
     print(json.dumps(report, indent=2))
     return 0

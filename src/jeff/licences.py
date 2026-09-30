@@ -25,6 +25,12 @@ FORBIDDEN_DATASETS = frozenset(
         "choyiny/decidebench", "gorilla-llm/Berkeley-Function-Calling-Leaderboard",
         "ai-safety-institute/AgentHarm", "thu-coai/Agent-SafetyBench", "normster/RuLES",
         "google/IFEval", "nguha/legalbench",
+        # Also evaluation-only, with no canonical HF id to list: ToolEmu, R-Judge, Contrast Sets.
+        "tomg-group-umd/DynaBench",  # the benchmark; DynaBench train lives at montehoover/DynaBench
+        "allenai/wildguardmix",  # holds WildGuardTest; its train split is not used
+        "fstandhartinger/jevbench",
+        # Blocked entirely for now; Plan 2 will allow its `train` config explicitly.
+        "nvidia/When2Call",
     }
 )
 
@@ -33,6 +39,8 @@ FORBIDDEN_CONFIGS = frozenset(
     {
         ("montehoover/DynaBench", "DynaBench"),  # the benchmark config
         ("montehoover/DynaBench", "DynaBenchSafetyMix"),  # contains BeaverTails and ToxicChat
+        ("nvidia/When2Call", "mcq"),  # evaluation-only; kept so removing the id above still blocks these
+        ("nvidia/When2Call", "llm_judge"),
     }
 )
 
@@ -60,7 +68,7 @@ def check(hf_id: str, licence: str, *, config: str | None = None, split: str = "
         part = part.strip().split("[")[0]
         if part != "train":
             raise LicenceError(f"{hf_id}: only train splits may be used, got split {split!r}")
-    if data_files and re.search(r"(^|[^a-z])(val|valid|validation|dev|test)([^a-z]|$)", data_files.lower()):
+    if data_files and re.search(r"(^|[^a-z])(val|valid|validation|dev|test|eval|heldout|holdout)([^a-z]|$)", data_files.lower()):
         raise LicenceError(f"{hf_id}: only train splits may be used, got split-like data_files {data_files!r}")
     if not is_allowed(licence):
         raise LicenceError(f"{hf_id}: licence {licence!r} is not commercially usable")

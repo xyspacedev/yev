@@ -148,14 +148,16 @@ def _iter_rows(spec: SourceSpec) -> Iterator[dict]:
     """Load the dataset and yield rows with ClassLabel ints mapped to names."""
     from datasets import ClassLabel, load_dataset
 
-    split = spec.split if spec.max_scan is None else f"{spec.split}[:{spec.max_scan}]"
     ds = load_dataset(
         spec.hf_id,
         spec.config,
-        split=split,
+        split=spec.split,
         revision=spec.revision,
         data_files={"train": spec.data_files} if spec.data_files else None,
     )
+    if spec.max_scan is not None:
+        # A random subset, not the head: heads are ordered (e.g. RuleTaker depth) and biased.
+        ds = ds.shuffle(seed=0).select(range(min(spec.max_scan, len(ds))))
     scalar = {c: f.names for c, f in ds.features.items() if isinstance(f, ClassLabel)}
     listed = {
         c: f.feature.names

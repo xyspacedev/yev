@@ -84,7 +84,8 @@ def test_model_generated_permissive_datasets_allowed():
     check("montehoover/DynaBench", "mit", config="DynaBenchTrain")
 
 
-@pytest.mark.parametrize("files", ["val.jsonl", "val_sft.jsonl", "data/test.parquet"])
+@pytest.mark.parametrize("files", ["val.jsonl", "val_sft.jsonl", "data/test.parquet", "eval.jsonl",
+                                   "data/heldout.parquet", "holdout-set.jsonl", "dev_eval.json"])
 def test_non_train_data_files_refused(files):
     with pytest.raises(LicenceError, match="split"):
         check("toy/toy", "mit", data_files=files)
@@ -93,3 +94,19 @@ def test_non_train_data_files_refused(files):
 @pytest.mark.parametrize("files", ["train.jsonl", "train_sft.jsonl"])
 def test_train_data_files_allowed(files):
     check("toy/toy", "mit", data_files=files)
+
+
+@pytest.mark.parametrize("hf_id", ["tomg-group-umd/DynaBench", "allenai/wildguardmix", "fstandhartinger/jevbench",
+                                   "nvidia/When2Call", "nvidia/when2call"])
+def test_denylist_gaps_closed(hf_id):
+    with pytest.raises(LicenceError, match="forbidden"):
+        check(hf_id, "mit")
+
+
+@pytest.mark.parametrize("config", ["mcq", "llm_judge"])
+def test_when2call_eval_configs_forbidden_by_config(config):
+    from jeff import licences
+
+    assert ("nvidia/when2call", config) in licences._FORBIDDEN_CONFIGS_LC
+    with pytest.raises(LicenceError, match="forbidden"):
+        check("nvidia/When2Call", "mit", config=config)
