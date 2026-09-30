@@ -13,7 +13,7 @@
 
 A plain PyTorch training loop (`trainer`) ties these together. An `infer` module runs a model over chat rows for eval and calibration. Everything is testable locally with a tiny randomly-initialised model and a fake tokenizer. The real runs happen on the GPU box via `scripts/aws/*.sh`, which read the host and key from environment variables.
 
-**Tech Stack:** Python ≥ 3.11, torch ≥ 2.9, transformers ≥ 5.0, peft ≥ 0.17, tensorboard. uv locally; an isolated venv on the box (torch cu130).
+**Tech Stack:** Python ≥ 3.11, torch ≥ 2.9, transformers ≥ 5.0 (the box has torch 2.14.1+cu130, transformers 5.18, peft 0.21, flash-linear-attention, causal-conv1d), peft ≥ 0.17, tensorboard. uv locally; an isolated venv on the box (torch cu130).
 
 **Spec:** `docs/superpowers/specs/2026-09-29-jeff-4b-system-one-design.md` (§5 Training, §6 Readout, §7 Evaluation).
 
@@ -36,6 +36,10 @@ A plain PyTorch training loop (`trainer`) ties these together. An `infer` module
 3. **Learning curve, added before the ablation.** L_ce only, on 25 %, 50 % and 100 % of train, subsampled by whole clusters.
 4. **Training loop.** A plain PyTorch loop instead of HF `Trainer`, because unit-grouped batching and permuted twins are awkward to fit into Trainer. The spec's "custom compute_loss" is honoured as `losses.total_loss`.
 5. **DecideBench group accuracy.** The dev copy of DecideBench examples has no `pair_id`. "Pair accuracy" on it is computed over template groups, meaning the id with its last `-<gold>` segment removed, and a group counts as correct only when every member is correct. Our own dev clusters use `cluster_id`.
+
+6. **No thinking mode.** Checked on the box: Qwen3.5's chat template opens `<think>` in the generation prompt. Every `apply_chat_template` call (training `encode` and `infer`) passes `enable_thinking=False`, which renders an empty `<think>\n\n</think>\n\n` so the next token is the answer letter. Serving must do the same.
+7. **Right-padding everywhere.** The model is `Qwen3_5ForCausalLM`, a hybrid of Gated DeltaNet linear attention and full attention. Left pads would pass through the recurrent state, so inference also right-pads and gathers each row's own last real position.
+8. **Kernels.** The box has `flash-linear-attention` and `causal-conv1d` installed. Without them transformers falls back to a much slower reference implementation. The smoke test logs whether the fast path is active.
 
 ## Review Focus
 
@@ -280,7 +284,7 @@ def rps(probs, target, mask):
   - `make_twin(row: dict, rng: random.Random) -> dict | None`: re-shuffles the final user turn's options into a new letter order. It remaps `letters`, `target` and `answer`, sets `twin_of = row["id"]`, and returns None for `type == "score"` or rows with fewer than 2 options.
   - `letter_token_ids(tokenizer) -> list[int]`: the ids for "A"… "F" as generated after the assistant prompt. It asserts each letter is exactly one token and all ids are distinct.
   - `encode(row, tokenizer, max_len: int) -> dict | None`, returning:
-    - `input_ids: list[int]`: `apply_chat_template(messages, add_generation_prompt=True, tokenize=True)`;
+    - `input_ids: list[int]`: `apply_chat_template(messages, add_generation_prompt=True, tokenize=True, enable_thinking=False)`;
     - `answer_pos: int`, which is `len(input_ids) - 1`;
     - `n_letters: int`;
     - `target: list[float]` (length 6, zero-padded);
@@ -310,7 +314,8 @@ class FakeTok:
         return self.vocab[w]
     def encode(self, text, add_special_tokens=False):
         return [self._id(w) for w in text.split()]
-    def apply_chat_template(self, messages, add_generation_prompt=True, tokenize=True):
+    def apply_chat_template(self, messages, add_generation_prompt=True, tokenize=True, **kwargs):
+        # accepts enable_thinking like the real Qwen template
         words = []
         for m in messages:
             words += ["<|" + m["role"] + "|>"] + m["content"].replace('"', " ").split()
@@ -457,7 +462,7 @@ def letter_token_ids(tokenizer) -> list[int]:
 
 
 def encode(row: dict, tokenizer, max_len: int) -> dict | None:
-    ids = tokenizer.apply_chat_template(row["messages"], add_generation_prompt=True, tokenize=True)
+    ids = tokenizer.apply_chat_template(row["messages"], add_generation_prompt=True, tokenize=True, enable_thinking=False)
     if hasattr(ids, "input_ids"):
         ids = ids["input_ids"]
     ids = list(ids)
@@ -827,6 +832,13 @@ def test_resume_continues_step_and_order(tmp_path, tok, tiny_model, make_row):
     again = train(cfg(tmp_path, max_steps=4), tokenizer=tok, model=tiny_model)
     assert again["steps"] == 4 and again["resumed_from"] == 2
 
+def test_letter_logits_padding_invariant(tok, tiny_model, make_row):
+    short = make_row("s", {"A": "x", "B": "y"}, "A", state="short")
+    long_ = make_row("l", {"A": "x", "B": "y"}, "A", state="much " * 40)
+    alone = letter_logits(tiny_model, tok, [short], max_len=512)[0]
+    batched = letter_logits(tiny_model, tok, [short, long_], max_len=512, batch_tokens=10**6)[0]
+    assert all(abs(a - b) < 1e-4 for a, b in zip(alone, batched))
+
 def test_letter_logits_shape(tok, tiny_model, make_row):
     rows = [make_row("r", {"A": "x", "B": "y"}, "A")]
     out = letter_logits(tiny_model, tok, rows, max_len=512)
@@ -858,7 +870,7 @@ def letter_logits(model, tokenizer, rows, max_len: int, batch_tokens: int = 1638
     out: list[list[float] | None] = [None] * len(rows)
     enc = []
     for i, r in enumerate(rows):
-        ids = tokenizer.apply_chat_template(r["messages"], add_generation_prompt=True, tokenize=True)
+        ids = tokenizer.apply_chat_template(r["messages"], add_generation_prompt=True, tokenize=True, enable_thinking=False)
         ids = list(ids["input_ids"] if hasattr(ids, "input_ids") else ids)[-max_len:]
         enc.append((i, ids))
     enc.sort(key=lambda x: len(x[1]))
@@ -868,11 +880,13 @@ def letter_logits(model, tokenizer, rows, max_len: int, batch_tokens: int = 1638
         L = max(len(x[1]) for x in batch)
         inp = torch.full((len(batch), L), pad, dtype=torch.long)
         att = torch.zeros((len(batch), L), dtype=torch.long)
-        for k, (_, ids) in enumerate(batch):  # left-pad so the answer position is the last column
-            inp[k, L - len(ids):] = torch.tensor(ids); att[k, L - len(ids):] = 1
-        logits = model(input_ids=inp.to(dev), attention_mask=att.to(dev)).logits[:, -1, :].float().cpu()
+        for k, (_, ids) in enumerate(batch):  # right-pad (linear attention must not see leading pads)
+            inp[k, : len(ids)] = torch.tensor(ids); att[k, : len(ids)] = 1
+        logits = model(input_ids=inp.to(dev), attention_mask=att.to(dev)).logits
+        last = torch.tensor([len(ids) - 1 for _, ids in batch], device=logits.device)
+        rows_ = logits[torch.arange(len(batch), device=logits.device), last].float().cpu()
         for k, (i, _) in enumerate(batch):
-            out[i] = logits[k, ids_letters].tolist()
+            out[i] = rows_[k, ids_letters].tolist()
     for item in enc:
         if b and (len(b) + 1) * max(len(item[1]), max(len(x[1]) for x in b)) > batch_tokens:
             flush(b); b = []
@@ -1127,7 +1141,7 @@ Adjust only what the tests prove necessary. For example, `save_pretrained` on a 
   - rsyncs `data/mix/stage0/` and `data/dev/decidebench_examples.jsonl` to `~/jeff/data/…`;
   - never sends anything else under `data/`.
 - `run.sh <cmd…>`: same env checks. It runs `cd ~/jeff && ~/venv/bin/pip install -q -e '.[train]' --no-deps && <cmd>` over ssh inside `nohup … > ~/runs/<first arg basename>.log 2>&1 &` when `--bg` is the first argument, and in the foreground otherwise.
-- `setup.sh`: the remote venv recipe already run on the box. It builds an **isolated** venv (no system site packages: Ubuntu's `cryptography` and `pyOpenSSL` break transformers' imports) from `/opt/pytorch/bin/python`, then runs `pip install torch --index-url https://download.pytorch.org/whl/cu130` and the `train` extra's packages, then `hf download Qwen/Qwen3.5-4B-Base --local-dir ~/models/Qwen3.5-4B-Base`. It is kept so the box can be rebuilt.
+- `setup.sh`: the remote venv recipe already run on the box. It builds an **isolated** venv (no system site packages: Ubuntu's `cryptography` and `pyOpenSSL` break transformers' imports) from `/opt/pytorch/bin/python`, then runs `pip install torch --index-url https://download.pytorch.org/whl/cu130` and the `train` extra's packages, then `pip install flash-linear-attention` and `pip install causal-conv1d --no-build-isolation`, then `hf download Qwen/Qwen3.5-4B-Base --local-dir ~/models/Qwen3.5-4B-Base`. It is kept so the box can be rebuilt.
 
 - [ ] **Step 1: Write the failing test.** Both scripts exit 2 when the environment variables are unset, and no script contains an IP address or a `.pem` path.
 
@@ -1161,7 +1175,7 @@ Before starting, set `JEFF_TRAIN_HOST` and `JEFF_TRAIN_KEY` from the controller'
   2. `scripts/aws/run.sh jeff train --config configs/stage0/smoke.json`
 
   Expected: 200 steps, finite loss, and a `train_summary.json` with `tokens_per_s`. Record `encode_stats.dropped_overlong`; if it is above 0.5 % of rows, report it. Estimate hours per full epoch as `train tokens / tokens_per_s`. If that is over 6 h, STOP and report before the learning curve, with the dollar estimate at the spot price.
-- [ ] **Step 2: Real-model tokenizer check.** On the box, run `~/venv/bin/python -c` to call `letter_token_ids` on the Qwen tokenizer. It must pass. If a letter isn't a single token, STOP and report.
+- [ ] **Step 2: Real-model tokenizer check.** (Letters A–F were already confirmed as single tokens 32–37 on the box; rerun anyway.) On the box, run `~/venv/bin/python -c` to call `letter_token_ids` on the Qwen tokenizer. It must pass. If a letter isn't a single token, STOP and report.
 - [ ] **Step 3: Learning curve.** Run `lc25`, `lc50` and `lc100` one after another with `run.sh --bg`, watching the logs. After each run:
   1. `jeff calibrate --model ~/runs/<name>/final --base ~/models/Qwen3.5-4B-Base --data ~/jeff/data/mix/stage0/calibration.chat.jsonl --out ~/runs/<name>/calibration.json`
   2. `jeff eval … --data ~/jeff/data/mix/stage0/dev.chat.jsonl --calibration ~/runs/<name>/calibration.json --out ~/runs/<name>/dev_report.json`
