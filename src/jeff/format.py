@@ -54,11 +54,28 @@ class ExamplePool:
             return None
         own = _unit(d)
         chosen: list[Decision] = []
+        used = {own}
+
+        def valid(e: Decision) -> bool:
+            return _unit(e) not in used and e.state != d.state
+
         for key in d.keys:
-            candidates = [e for e in by_gold.get(key, []) if _unit(e) != own]
-            if not candidates:
+            bucket = by_gold.get(key, [])
+            pick = None
+            if bucket:
+                for _ in range(20):
+                    e = rng.choice(bucket)
+                    if valid(e):
+                        pick = e
+                        break
+                if pick is None:
+                    candidates = [e for e in bucket if valid(e)]
+                    if candidates:
+                        pick = rng.choice(candidates)
+            if pick is None:
                 return None
-            chosen.append(rng.choice(candidates))
+            used.add(_unit(pick))
+            chosen.append(pick)
         if sum(len(e.state) for e in chosen) > self.max_example_chars:
             return None
         rng.shuffle(chosen)

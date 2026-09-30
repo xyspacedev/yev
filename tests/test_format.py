@@ -64,3 +64,35 @@ def test_example_pool_returns_none_when_key_missing_or_too_long():
     long_pool = ExamplePool([d(i, "abc"[i % 3], cluster=f"k{i}", state="x" * 5000) for i in range(6)])
     assert long_pool.pick(d(9, "a"), random.Random(0)) is None
     assert signature(d(1, "a")) == signature(d(2, "c"))
+
+
+def test_pick_skips_identical_state_candidate():
+    pool = ExamplePool([d(1, "a", cluster="k1", state="same"), d(2, "a", cluster="k2", state="other"),
+                        d(3, "b", cluster="k3"), d(4, "c", cluster="k4")])
+    item = d(9, "a", cluster="z", state="same")
+    for s in range(30):
+        ex = pool.pick(item, random.Random(s))
+        assert all(e.state != "same" for e in ex)
+
+
+def test_pick_examples_from_distinct_units():
+    rows = [d(i, "abc"[i % 3], cluster="shared" if i < 6 else f"k{i}") for i in range(12)]
+    pool = ExamplePool(rows)
+    for s in range(30):
+        ex = pool.pick(d(99, "a", cluster="own"), random.Random(s))
+        if ex is not None:
+            units = [e.cluster_id or e.id for e in ex]
+            assert len(set(units)) == len(units)
+
+
+def test_pick_performance_20k_pool():
+    import time
+
+    yn = [Option("yes", "Yes."), Option("no", "No.")]
+    rows = [d(i, "yes" if i % 2 else "no", type="noul", options=yn, cluster=f"c{i}") for i in range(20000)]
+    pool = ExamplePool(rows)
+    rng = random.Random(0)
+    t = time.perf_counter()
+    for r in rows[:2000]:
+        assert pool.pick(r, rng) is not None
+    assert time.perf_counter() - t < 2.0
