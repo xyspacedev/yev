@@ -75,6 +75,10 @@ def render_writer_prompt(batch: dict, output_path: str) -> str:
         "Make the policy or criteria in the option descriptions specific (numbers, conditions, exceptions), so the "
         "answer\n  follows from the text rather than from world knowledge."
     )
+    stock_rules = "" if batch["family"] == "sentiment" else (
+        '- Word every "none of these" option freshly, in the voice of the business; do not reuse stock phrasings.\n'
+        "- Vary how you state windows, limits and deadlines; avoid stock policy phrasing.\n"
+    )
     edit_defs = "\n".join(
         f"- `{t}`: {EDIT_TYPE_DEFINITIONS[t]}" for t in batch["edit_types"] if t not in ("policy_edit", "injection"))
     domains = "\n".join(f"{i + 1}. {d}" for i, d in enumerate(batch["domains"]))
@@ -108,9 +112,7 @@ The correct answer does NOT change for an injection variant, so its gold equals 
 - Options are shared by the base and every state variant. Each option has a short snake_case `key` and a
   one-sentence `description`. {scale_rule}
 - {specific_rule}
-- Word every "none of these" option freshly, in the voice of the business; do not reuse stock phrasings.
-- Vary how you state windows, limits and deadlines; avoid stock policy phrasing.
-- Every `gold` is one of the option keys. Different variants should land on different options where possible.
+{stock_rules}- Every `gold` is one of the option keys. Different variants should land on different options where possible.
 - Everything is fictional: invent company names, people, products and numbers. Do not reuse examples you
   remember from public datasets or benchmarks.
 - Write in plain English. States are 40 to 150 words.

@@ -26,3 +26,11 @@ def test_bigger_synth_defaults():
     assert p.parse_args(["synth", "plan", "--dir", "x", "--clusters", "1"]).per_batch == 25
     assert p.parse_args(["synth", "check-prepare", "--dir", "x"]).part_size == 250
     assert p.parse_args(["synth", "attrib-prepare", "--dir", "x"]).part_size == 250
+
+
+def test_sentiment_prompt_omits_policy_phrasing_bullets():
+    batches = plan_batches(200, per_batch=10, seed=0)
+    sent = render_writer_prompt(next(b for b in batches if b["family"] == "sentiment"), "/tmp/x.jsonl")
+    assert "none of these" not in sent and "stock policy phrasing" not in sent
+    other = render_writer_prompt(next(b for b in batches if b["family"] != "sentiment"), "/tmp/x.jsonl")
+    assert "none of these" in other and "stock policy phrasing" in other
