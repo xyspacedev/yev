@@ -17,8 +17,6 @@ FORBIDDEN_DATASETS = frozenset(
         "SetFit/amazon_reviews_multi_en", "SetFit/sst5", "fancyzhx/ag_news", "ag_news",
         "fever/fever", "Tobi-Bueck/customer-support-tickets", "DeepPavlov/hwu64",
         "yueliu1999/GuardReasonerTrain",
-        # proprietary-model outputs
-        "karanxa/agent-action-safety-dataset",
         # licence forbids training
         "nvidia/Nemotron-AIQ-Agentic-Safety-Dataset-1.0",
         # evaluation-only

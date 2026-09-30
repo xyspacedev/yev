@@ -126,3 +126,24 @@ def test_build_drops_entire_cluster_if_any_member_is_skipped():
 def test_fetch_guards_eagerly_before_network():
     with pytest.raises(LicenceError):
         fetch(spec(lambda *a: [], hf_id="toy/toy", split="test"))
+
+
+def test_fetch_passes_revision_and_data_files(monkeypatch):
+    import datasets
+
+    seen = {}
+
+    class FakeDS(list):
+        features = {}
+
+    def fake_load_dataset(hf_id, config, split, revision=None, data_files=None):
+        seen.update(hf_id=hf_id, config=config, split=split, revision=revision, data_files=data_files)
+        return FakeDS([{"x": 1}])
+
+    monkeypatch.setattr(datasets, "load_dataset", fake_load_dataset)
+    from jeff.sources.base import fetch
+
+    s = spec(lambda *a: [], config="default", revision="refs/convert/parquet", data_files="train.jsonl")
+    assert list(fetch(s)) == [{"x": 1}]
+    assert seen == {"hf_id": "toy/toy", "config": "default", "split": "train",
+                    "revision": "refs/convert/parquet", "data_files": {"train": "train.jsonl"}}

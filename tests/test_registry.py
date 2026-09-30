@@ -29,3 +29,10 @@ def test_fetch_maps_classlabel_to_names():
 
     rows = list(islice(fetch(by_name("banking77")), 3))
     assert all(isinstance(r["label"], str) for r in rows)
+
+
+def test_snli_cf_uses_parquet_branch_and_agent_actions_uses_train_file():
+    snli = by_name("snli_cf")
+    assert (snli.config, snli.revision) == ("default", "refs/convert/parquet")
+    aa = by_name("agent_actions")
+    assert (aa.hf_id, aa.data_files, aa.licence) == ("karanxa/agent-action-safety-dataset", "train.jsonl", "apache-2.0")

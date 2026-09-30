@@ -30,7 +30,10 @@ CIVIL_SCALE = [
 
 
 def convert_dynabench(row: dict, i: int, rng: random.Random, labels: list[str]) -> list[Decision]:
-    policy, transcript = (row["policy"] or "").strip(), (row["transcript"] or "").strip()
+    raw_policy = row["policy"]
+    if isinstance(raw_policy, list):
+        raw_policy = "\n".join(p.strip() for p in raw_policy if p and p.strip())
+    policy, transcript = (raw_policy or "").strip(), (row["transcript"] or "").strip()
     if row["label"] not in ("PASS", "FAIL") or not policy or not transcript:
         return []
     return [

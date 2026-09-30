@@ -38,3 +38,11 @@ def test_civil_comments_is_ordered_score_and_skips_empty():
     assert d.type == "score" and d.keys == ["none", "mild", "toxic", "severe"] and d.gold == "severe"
     assert convert_civil_comments({"text": "  ", "toxicity": 0.1}, 0, R, []) == []
     assert convert_civil_comments({"text": "hi", "toxicity": None}, 0, R, []) == []
+
+
+def test_dynabench_policy_as_list_is_joined():
+    row = {"policy": ["1. Never quote prices.\n", "2. Be polite.\n", " "], "transcript": "User: hi", "label": "PASS"}
+    [d] = convert_dynabench(row, 0, R, [])
+    assert d.state.startswith("Policy:\n1. Never quote prices.\n2. Be polite.\n\nTranscript:")
+    assert d.gold == "yes"
+    assert convert_dynabench({"policy": [" "], "transcript": "t", "label": "PASS"}, 0, R, []) == []

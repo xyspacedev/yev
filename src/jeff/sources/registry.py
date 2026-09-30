@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from jeff.sources.base import SourceSpec
+from jeff.sources.agent_actions import convert_agent_action_safety
 from jeff.sources.fast_decisions import FAST_DECISIONS_CONFIGS, convert_fast_decisions
 from jeff.sources.intent import convert_go_emotions, intent_converter
 from jeff.sources.moderation import convert_aegis, convert_civil_comments, convert_dynabench
@@ -16,7 +17,8 @@ SOURCES: list[SourceSpec] = [
     SourceSpec("vitaminc", "tals/vitaminc", None, "train", "cc-by-sa-3.0", convert_vitaminc, 12000),
     SourceSpec("wanli", "alisawuffles/WANLI", None, "train", "cc-by-4.0", convert_wanli, 6000),
     SourceSpec("multi_nli", "nyu-mll/multi_nli", None, "train", "oanc-mixed", convert_multi_nli, 4000),
-    SourceSpec("snli_cf", "sagnikrayc/snli-cf-kaushik", "plain_text", "train", "cc-by-4.0", convert_snli_cf, 3000),
+    SourceSpec("snli_cf", "sagnikrayc/snli-cf-kaushik", "default", "train", "cc-by-4.0", convert_snli_cf, 3000,
+               revision="refs/convert/parquet"),
     SourceSpec("negation", "jinaai/negation-dataset", None, "train", "apache-2.0", convert_negation, 2000),
     # moderation
     SourceSpec("dynabench", "montehoover/DynaBench", "DynaBenchTrain", "train", "mit", convert_dynabench, 12000),
@@ -27,6 +29,9 @@ SOURCES: list[SourceSpec] = [
     SourceSpec("eikos", "caiovicentino1/eikos-decisions", "core", "train", "cc-by-4.0", convert_eikos, 12000),
     SourceSpec("ruletaker", "tasksource/ruletaker", None, "train", "apache-2.0", convert_ruletaker, 3000,
                max_scan=100_000),
+    # action review (Gemini-written, Apache-2.0; spec §2 rule 7)
+    SourceSpec("agent_actions", "karanxa/agent-action-safety-dataset", None, "train", "apache-2.0",
+               convert_agent_action_safety, 10000, data_files="train.jsonl"),
     # intent and sentiment
     SourceSpec("banking77", "legacy-datasets/banking77", None, "train", "cc-by-4.0",
                intent_converter("text", "label"), 4000, label_column="label"),

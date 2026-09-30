@@ -31,6 +31,8 @@ class SourceSpec:
     pool_size: int
     label_column: str | None = None
     max_scan: int | None = None
+    revision: str | None = None
+    data_files: str | None = None
 
 
 @dataclass
@@ -140,7 +142,13 @@ def _iter_rows(spec: SourceSpec) -> Iterator[dict]:
     from datasets import ClassLabel, load_dataset
 
     split = spec.split if spec.max_scan is None else f"{spec.split}[:{spec.max_scan}]"
-    ds = load_dataset(spec.hf_id, spec.config, split=split)
+    ds = load_dataset(
+        spec.hf_id,
+        spec.config,
+        split=split,
+        revision=spec.revision,
+        data_files={"train": spec.data_files} if spec.data_files else None,
+    )
     scalar = {c: f.names for c, f in ds.features.items() if isinstance(f, ClassLabel)}
     listed = {
         c: f.feature.names

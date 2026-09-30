@@ -18,7 +18,7 @@ def test_check_passes_clean_train_split():
 
 
 @pytest.mark.parametrize(
-    "hf_id", ["facebook/anli", "choyiny/decidebench", "karanxa/agent-action-safety-dataset", "SetFit/sst5"]
+    "hf_id", ["facebook/anli", "choyiny/decidebench", "fever/fever", "SetFit/sst5"]
 )
 def test_forbidden_datasets_refused_even_with_ok_licence(hf_id):
     with pytest.raises(LicenceError, match="forbidden"):
@@ -77,3 +77,8 @@ def test_deeppavlov_hwu64_specifically():
     """Regression test for DeepPavlov/hwu64 typo (deeppalov vs deeppavlov)."""
     with pytest.raises(LicenceError, match="forbidden"):
         check("DeepPavlov/hwu64", "mit")
+
+
+def test_model_generated_permissive_datasets_allowed():
+    check("karanxa/agent-action-safety-dataset", "apache-2.0")
+    check("montehoover/DynaBench", "mit", config="DynaBenchTrain")
