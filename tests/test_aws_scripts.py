@@ -38,6 +38,9 @@ def _fake_env(tmp_path):
         'HOME="$FAKE_HOME" exec bash -c "${@: -1}"\n'
     )
     ssh.chmod(0o755)
+    setsid = bindir / "setsid"  # macOS has no setsid; the box (Ubuntu) does
+    setsid.write_text('#!/bin/sh\nexec "$@"\n')
+    setsid.chmod(0o755)
     env = {
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "JEFF_TRAIN_HOST": "u@h",
@@ -59,6 +62,7 @@ def test_run_bg_remote_command_and_quoting(tmp_path):
     assert r.returncode == 0, r.stderr
     remote = (tmp_path / "ssh_args").read_text()
     assert "lc25.log" in remote and "venv/bin" in remote and "/dev/null" in remote
+    assert "nohup setsid bash -c" in remote and "&& nohup" not in remote
     out = home / "jeff_args"
     for _ in range(50):
         if out.exists() and out.read_text().count("\n") >= 6:
@@ -79,3 +83,15 @@ def test_run_foreground_args_unmangled(tmp_path):
     r = subprocess.run(["bash", "scripts/aws/run.sh", "jeff", "a b", "$HOME"], env=env, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     assert (home / "jeff_args").read_text().splitlines() == ["a b", "$HOME"]
+
+
+def test_run_bg_returns_before_job_finishes(tmp_path):
+    import time
+
+    home, env = _fake_env(tmp_path)
+    t0 = time.time()
+    # capture_output waits for EOF on the pipes: it hangs if the background job still holds ssh's stdout.
+    r = subprocess.run(["bash", "scripts/aws/run.sh", "--bg", "--log", "slow", "sleep", "5"],
+                       env=env, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert time.time() - t0 < 3

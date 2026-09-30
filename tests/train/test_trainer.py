@@ -78,3 +78,16 @@ def test_resume_starts_fresh_when_only_incomplete(tmp_path, tok, tiny_model, mak
     (broken / "adapter_model.safetensors").write_bytes(b"partial")
     out = train(cfg(tmp_path, max_steps=2), tokenizer=tok, model=tiny_model)
     assert out["resumed_from"] is None and out["steps"] == 2
+
+def test_perm_loss_with_mixed_option_counts(tmp_path, tok, tiny_model, make_row):
+    import random, torch
+    from jeff.train.data import encode, make_twin, letter_token_ids
+    from jeff.train.trainer import _batch_loss
+    two = make_row("two", {"A": "x", "B": "y"}, "A")
+    five = make_row("five", {"A": "p", "B": "q", "C": "r", "D": "s", "E": "t"}, "C")
+    rows = [two, make_twin(two, random.Random(0)), five, make_twin(five, random.Random(0))]
+    items = [encode(r, tok, 512) for r in rows]
+    c = cfg(tmp_path, lambda_perm=0.2)
+    loss, _, parts = _batch_loss(c, tiny_model, items, torch.tensor(letter_token_ids(tok)), 0, "cpu")
+    assert torch.isfinite(loss) and "perm" in parts and parts["perm"] >= 0
+    loss.backward()

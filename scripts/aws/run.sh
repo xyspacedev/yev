@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run a command on the training box: run.sh [--bg [--log NAME]] <cmd...>
-# With --bg the command runs under nohup and logs to ~/runs/<NAME>.log, where NAME is
+# With --bg the command runs detached (nohup setsid) and ssh returns at once; it logs to ~/runs/<NAME>.log, where NAME is
 # --log, else the value after --config (e.g. lc25), else basename of the command plus a UTC timestamp.
 # Requires JEFF_TRAIN_HOST (user@host) and JEFF_TRAIN_KEY (path to ssh key).
 set -euo pipefail
@@ -33,7 +33,9 @@ CMD="$(printf '%q ' "$@")"
 INNER="export PATH=\"\$HOME/venv/bin:\$PATH\" && cd ~/jeff && pip install -q -e '.[train]' --no-deps && $CMD"
 
 if [ "$BG" = 1 ]; then
-  REMOTE="mkdir -p ~/runs && nohup bash -c $(printf %q "$INNER") > ~/runs/$(printf %q "$LOG").log 2>&1 < /dev/null &"
+  # Only the job itself is backgrounded (not an "a && b &" list, whose subshell would keep ssh's
+  # stdout open), and setsid puts it in its own session so it survives the ssh session closing.
+  REMOTE="mkdir -p ~/runs || exit 1; nohup setsid bash -c $(printf %q "$INNER") > ~/runs/$(printf %q "$LOG").log 2>&1 < /dev/null &"
 else
   REMOTE="bash -c $(printf %q "$INNER")"
 fi

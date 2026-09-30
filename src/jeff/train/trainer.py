@@ -132,7 +132,8 @@ def _batch_loss(cfg, model, items, letter_ids, pad_id, device):
                 pa.append(torch.stack([logp[o, key_idx[o][x]] for x in keys]).exp())
                 pb.append(torch.stack([logp[k, key_idx[k][x]] for x in keys]).exp())
         if pa:
-            parts["perm"] = L.perm_skl(torch.stack(pa), torch.stack(pb))
+            # per pair: twins of rows with different option counts can share a micro-batch
+            parts["perm"] = torch.stack([L.perm_skl(a[None], b[None]) for a, b in zip(pa, pb)]).mean()
             loss = loss + cfg.lambda_perm * parts["perm"]
     if cfg.lambda_rps:
         sel = [k for k, e in enumerate(items) if e["type"] == "score"]
