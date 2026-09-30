@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 from collections import defaultdict
+from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
 
@@ -20,6 +21,10 @@ from jeff.filters.contamination import (
 )
 from jeff.filters.pipeline import assert_clean, run_filters
 from jeff.generators import actions, returns, severity
+from jeff.generators.llm.attrib import prepare_pairs, render_attrib_prompt, score_attribution
+from jeff.generators.llm.check import prepare_sheets, render_checker_prompt, score_answers
+from jeff.generators.llm.ingest import ingest_file
+from jeff.generators.llm.plan import plan_batches, render_writer_prompt
 from jeff.generators.specs import SYNTHETIC_SPECS
 from jeff.schema import read_jsonl, write_jsonl
 from jeff.sources.base import build, fetch
@@ -132,6 +137,137 @@ def cmd_filter(args: argparse.Namespace) -> int:
     return 0
 
 
+def _write_json(path: Path, obj) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_stats_atomically(path, obj)
+
+
+def _read_answer_lines(paths) -> tuple[list[dict], int]:
+    answers, bad = [], 0
+    for path in paths:
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                bad += 1
+                continue
+            if isinstance(obj, dict):
+                answers.append(obj)
+            else:
+                bad += 1
+    return answers, bad
+
+
+def _dump_items(path: Path, items: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(it, ensure_ascii=False) + "\n" for it in items), encoding="utf-8")
+
+
+def cmd_synth_plan(args) -> int:
+    run = Path(args.dir)
+    for b in plan_batches(args.clusters, args.per_batch, args.seed):
+        spec_path = run / "batches" / f"{b['batch_id']}.json"
+        spec_path.parent.mkdir(parents=True, exist_ok=True)
+        spec_path.write_text(json.dumps(b, indent=2))
+        out = (run / "written" / f"{b['batch_id']}.jsonl").resolve()
+        spec_path.with_suffix(".prompt.md").write_text(render_writer_prompt(b, str(out)))
+    print(f"planned {args.clusters} clusters in {len(list((run / 'batches').glob('*.json')))} batches")
+    return 0
+
+
+def cmd_synth_ingest(args) -> int:
+    run = Path(args.dir)
+    rows, stats = [], Counter()
+    for spec_path in sorted((run / "batches").glob("*.json")):
+        b = json.loads(spec_path.read_text())
+        written = run / "written" / f"{b['batch_id']}.jsonl"
+        if not written.exists():
+            stats["missing_file"] += 1
+            continue
+        got, s = ingest_file(written, b)
+        rows.extend(got)
+        stats.update(s)
+    write_jsonl(run / "ingested.jsonl", rows)
+    stats["rows"] = len(rows)
+    _write_json(run / "reports" / "ingest.json", dict(stats))
+    print(json.dumps(dict(stats)))
+    return 0
+
+
+def cmd_synth_check_prepare(args) -> int:
+    run = Path(args.dir)
+    parts, key = prepare_sheets(list(read_jsonl(run / "ingested.jsonl")), n_sheets=args.sheets,
+                                part_size=args.part_size, seed=args.seed)
+    for name, items in parts:
+        sheet = (run / "check" / f"{name}.jsonl").resolve()
+        _dump_items(sheet, items)
+        answers = sheet.with_name(f"answers-{name}.jsonl")
+        sheet.with_suffix(".prompt.md").write_text(render_checker_prompt(str(sheet), str(answers)))
+    _write_json(run / "private" / "check-key.json", key)
+    print(f"{len(parts)} checker parts")
+    return 0
+
+
+def cmd_synth_check_score(args) -> int:
+    run = Path(args.dir)
+    key = json.loads((run / "private" / "check-key.json").read_text())
+    answers, bad = _read_answer_lines(sorted((run / "check").glob("answers-*.jsonl")))
+    kept, stats = score_answers(list(read_jsonl(run / "ingested.jsonl")), key, answers)
+    stats["bad_answer_line"] = bad
+    write_jsonl(run / "checked.jsonl", kept)
+    _write_json(run / "reports" / "check.json", dict(stats))
+    print(json.dumps(dict(stats)))
+    return 0
+
+
+def cmd_synth_attrib_prepare(args) -> int:
+    run = Path(args.dir)
+    parts, key = prepare_pairs(list(read_jsonl(run / "checked.jsonl")), part_size=args.part_size, seed=args.seed)
+    for name, items in parts:
+        path = (run / "attrib" / f"{name}.jsonl").resolve()
+        _dump_items(path, items)
+        path.with_suffix(".prompt.md").write_text(
+            render_attrib_prompt(str(path), str(path.with_name(f"answers-{name}.jsonl"))))
+    _write_json(run / "private" / "attrib-key.json", key)
+    print(f"{len(parts)} attribution parts")
+    return 0
+
+
+def cmd_synth_attrib_score(args) -> int:
+    run = Path(args.dir)
+    key = json.loads((run / "private" / "attrib-key.json").read_text())
+    answers, bad = _read_answer_lines(sorted((run / "attrib").glob("answers-*.jsonl")))
+    checked = list(read_jsonl(run / "checked.jsonl"))
+    kept, stats = score_attribution(checked, key, answers)
+    stats["bad_answer_line"] = bad
+    write_jsonl(run / "final" / "synthetic_opus.jsonl", kept)
+    _write_json(run / "reports" / "attrib.json", dict(stats))
+    ingest = json.loads((run / "reports" / "ingest.json").read_text())
+    planned = sum(json.loads(p.read_text())["n_clusters"] for p in (run / "batches").glob("*.json"))
+    clusters_by_family: Counter = Counter()
+    seen: set[str] = set()
+    for d in kept:
+        if d.cluster_id not in seen:
+            seen.add(d.cluster_id)
+            clusters_by_family[d.family] += 1
+    pilot = {
+        "planned_clusters": planned,
+        "ingested_clusters": ingest.get("clusters_kept", 0),
+        "ingested_rows": ingest.get("rows", 0),
+        "checked_rows": len(checked),
+        "final_rows": len(kept),
+        "final_clusters": len(seen),
+        "final_clusters_by_family": dict(clusters_by_family),
+        "final_rows_by_edit_type": dict(Counter(d.edit_type or "base" for d in kept)),
+        "soft_label_share": round(sum(d.soft_gold is not None for d in kept) / max(len(kept), 1), 4),
+    }
+    _write_json(run / "reports" / "pilot.json", pilot)
+    print(json.dumps(pilot, indent=2))
+    return 0
+
+
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jeff")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -158,6 +294,22 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_gen_rules)
+    synth = sub.add_parser("synth", help="Opus-subagent synthetic cluster pipeline")
+    ssub = synth.add_subparsers(dest="synth_command", required=True)
+    for name, func in [("plan", cmd_synth_plan), ("ingest", cmd_synth_ingest),
+                       ("check-prepare", cmd_synth_check_prepare), ("check-score", cmd_synth_check_score),
+                       ("attrib-prepare", cmd_synth_attrib_prepare), ("attrib-score", cmd_synth_attrib_score)]:
+        p = ssub.add_parser(name)
+        p.add_argument("--dir", required=True)
+        p.add_argument("--seed", type=int, default=0)
+        p.set_defaults(func=func)
+        if name == "plan":
+            p.add_argument("--clusters", type=int, required=True)
+            p.add_argument("--per-batch", type=int, default=10)
+        if name == "check-prepare":
+            p.add_argument("--sheets", type=int, default=3)
+        if name in ("check-prepare", "attrib-prepare"):
+            p.add_argument("--part-size", type=int, default=100)
     return parser
 
 
