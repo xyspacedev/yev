@@ -215,7 +215,7 @@ def cmd_synth_ingest(args) -> int:
         if not written.exists():
             stats["missing_file"] += 1
             continue
-        got, s = ingest_file(written, b)
+        got, s = ingest_file(written, b, run_name=run.resolve().name)
         rows.extend(got)
         stats.update(s)
     write_jsonl(run / "ingested.jsonl", rows)

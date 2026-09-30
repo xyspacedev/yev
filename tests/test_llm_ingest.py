@@ -75,3 +75,39 @@ def test_ingest_file_counts_bad_lines_and_keeps_good_ones(tmp_path):
     assert len({d.cluster_id for d in ds}) == 2
     assert {d.cluster_id for d in ds} == {"batch-000:0", "batch-000:4"}
     assert stats["bad_json"] == 2 and stats["bad_shape"] == 1 and stats["clusters_kept"] == 2
+
+
+def test_run_name_prefixes_cluster_ids(tmp_path):
+    path = tmp_path / "batch-000.jsonl"
+    path.write_text(json.dumps(cluster()) + "\n")
+    b = {"batch_id": "batch-000", "family": "expenses", "qtype": "choice"}
+    ds, _ = ingest_file(path, b, run_name="pilot-1")
+    assert {d.cluster_id for d in ds} == {"pilot-1:batch-000:0"}
+    assert ds[0].id == "pilot-1:batch-000:0:0"
+
+
+def test_fallback_triggers_when_lines_parse_but_none_is_a_dict(tmp_path):
+    path = tmp_path / "b.jsonl"
+    body = json.dumps(cluster(), indent=2)
+    path.write_text("[]\n" + body + "\n")
+    ds, stats = ingest_file(path, {"batch_id": "b", "family": "expenses", "qtype": "choice"})
+    assert len({d.cluster_id for d in ds}) == 1 and stats["recovered_multiline"] == 1
+
+
+def test_policy_edit_must_change_something():
+    same = [dict(o) for o in OPTS]
+    case_only = [dict(o) for o in OPTS]
+    case_only[2] = {"key": "reject", "description": "REJECT CLAIMS OF $500 OR MORE."}
+    pv = [{"options": same, "gold": "reject", "edit_type": "policy_edit", "edit": "none"},
+          {"options": case_only, "gold": "reject", "edit_type": "policy_edit", "edit": "case"}]
+    ds, reasons = parse_cluster(cluster(policy_variants=pv), cluster_id="p", family="expenses", qtype="choice")
+    assert [d.edit_type for d in ds] == [None, "threshold", "negation"]
+    assert reasons["no_edit"] == 2 and "bad_policy_edit" not in reasons
+
+
+def test_choice_clusters_need_three_options():
+    two = OPTS[:2]
+    obj = cluster(options=two, base={"state": BASE, "gold": "approve"},
+                  variants=[{"state": BASE.replace("$480", "$520"), "gold": "partial", "edit_type": "threshold", "edit": "x"}])
+    ds, reasons = parse_cluster(obj, cluster_id="t", family="expenses", qtype="choice")
+    assert ds == [] and reasons["too_few_options"] == 1 and reasons["cluster_rejected"] == 1

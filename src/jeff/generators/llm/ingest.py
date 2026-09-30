@@ -11,23 +11,37 @@ from jeff.generators.llm.check import LETTERS
 from jeff.schema import Decision, Option, SchemaError
 
 SOURCE = "synthetic_opus"
+MIN_CHOICE_OPTIONS = 3
 
 
 def _options(raw: list[dict]) -> list[Option]:
     return [Option(str(o["key"]).strip().lower(), str(o["description"]).strip()) for o in raw]
 
 
-def _policy_edit_ok(base: list[Option], new: list[Option]) -> bool:
+def _policy_edit_check(base: list[Option], new: list[Option]) -> str | None:
+    """None when the edit is valid, else the rejection reason."""
     if [o.key for o in base] != [o.key for o in new]:
-        return False
+        return "bad_policy_edit"
     changed = [(a, b) for a, b in zip(base, new) if a.description != b.description]
-    return len(changed) == 1 and token_edit_size(changed[0][0].description, changed[0][1].description) <= MAX_EDIT_TOKENS
+    if not changed:
+        return "no_edit"
+    if len(changed) != 1:
+        return "bad_policy_edit"
+    old, cur = changed[0][0].description, changed[0][1].description
+    size = token_edit_size(old, cur)
+    if size < 1 or old.lower() == cur.lower():
+        return "no_edit"
+    return None if size <= MAX_EDIT_TOKENS else "bad_policy_edit"
 
 
 def parse_cluster(obj: dict, *, cluster_id: str, family: str, qtype: str) -> tuple[list[Decision], Counter]:
     reasons: Counter = Counter()
     if len(obj["options"]) > len(LETTERS):
         reasons["too_many_options"] += 1
+        reasons["cluster_rejected"] += 1
+        return [], reasons
+    if qtype == "choice" and len(obj["options"]) < MIN_CHOICE_OPTIONS:
+        reasons["too_few_options"] += 1
         reasons["cluster_rejected"] += 1
         return [], reasons
     question = str(obj["question"]).strip()
@@ -55,8 +69,11 @@ def parse_cluster(obj: dict, *, cluster_id: str, family: str, qtype: str) -> tup
             continue
         new_options = _options(v["options"])
         gold = str(v["gold"]).strip().lower()
-        if str(v.get("edit_type") or "").strip().lower() != "policy_edit" or not _policy_edit_ok(options, new_options) or gold == base_gold:
+        problem = _policy_edit_check(options, new_options)
+        if str(v.get("edit_type") or "").strip().lower() != "policy_edit" or gold == base_gold:
             reasons["bad_policy_edit"] += 1
+        elif problem:
+            reasons[problem] += 1
         else:
             members.append((base_state, new_options, gold, "policy_edit"))
 
@@ -77,9 +94,10 @@ def parse_cluster(obj: dict, *, cluster_id: str, family: str, qtype: str) -> tup
     return valid, reasons
 
 
-def _handle(obj, n: int, batch: dict, stats: Counter, out: list[Decision]) -> None:
+def _handle(obj, n: int, batch: dict, stats: Counter, out: list[Decision], run_name: str | None) -> None:
+    prefix = f"{run_name}:" if run_name else ""
     try:
-        decisions, reasons = parse_cluster(obj, cluster_id=f"{batch['batch_id']}:{n}",
+        decisions, reasons = parse_cluster(obj, cluster_id=f"{prefix}{batch['batch_id']}:{n}",
                                            family=batch["family"], qtype=batch["qtype"])
     except (KeyError, TypeError, AttributeError):
         stats["bad_shape"] += 1
@@ -102,11 +120,11 @@ def _scan_objects(text: str):
         pos = end
 
 
-def ingest_file(path: Path | str, batch: dict) -> tuple[list[Decision], Counter]:
+def ingest_file(path: Path | str, batch: dict, run_name: str | None = None) -> tuple[list[Decision], Counter]:
     text = Path(path).read_text(encoding="utf-8")
     stats: Counter = Counter()
     out: list[Decision] = []
-    parsed = 0
+    dicts = 0
     for n, line in enumerate(text.splitlines()):
         if not line.strip():
             continue
@@ -116,12 +134,15 @@ def ingest_file(path: Path | str, batch: dict) -> tuple[list[Decision], Counter]
         except json.JSONDecodeError:
             stats["bad_json"] += 1
             continue
-        parsed += 1
-        _handle(obj, n, batch, stats, out)
-    if parsed == 0 and "{" in text:
+        if not isinstance(obj, dict):
+            stats["bad_shape"] += 1
+            continue
+        dicts += 1
+        _handle(obj, n, batch, stats, out, run_name)
+    if dicts == 0 and "{" in text:
         stats, out = Counter(), []
         for n, obj in enumerate(_scan_objects(text)):
             if isinstance(obj, dict):
                 stats["recovered_multiline"] += 1
-                _handle(obj, n, batch, stats, out)
+                _handle(obj, n, batch, stats, out, run_name)
     return out, stats
