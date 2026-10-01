@@ -103,3 +103,12 @@ def test_only_bench_build_reads_the_test_set():
     src = (SRC / "bench" / "decidebench.py").read_text(encoding="utf-8")
     assert len(re.findall(r"\bload_test_raw\(", src)) == 1
     assert re.search(r"def build\(out: Path\) -> dict:\n    test_items = db\.load_test_raw\(\)", src)
+
+
+def test_no_script_reads_the_test_set():
+    scripts = Path(__file__).resolve().parents[2] / "scripts"
+    files = [p for p in scripts.rglob("*") if p.is_file()]
+    assert files  # the guard is looking at something
+    offenders = [p.relative_to(scripts).as_posix() for p in files
+                 if re.search(r"load_test_raw|test\.jsonl", p.read_text(encoding="utf-8", errors="ignore"))]
+    assert offenders == []

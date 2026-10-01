@@ -31,14 +31,14 @@ def test_bench_score_writes_predictions_and_metrics(tmp_path, monkeypatch, tok, 
     out = tmp_path / "out"
     assert cli.main(["bench", "score", "--name", "decidebench", "--model", "m", "--base", "b",
                      "--rows", str(d / "rows_examples.chat.jsonl"), "--calibration", str(cal),
-                     "--out", str(out), "--max-len", "8"]) == 0
+                     "--out", str(out)]) == 0
     preds = [json.loads(line) for line in (out / "predictions.jsonl").read_text().splitlines()]
     assert len(preds) == 4 and set(preds[0]) == {"id", "letters", "probs", "pred", "gold"}
     assert preds[0]["gold"] == "approve" and abs(sum(preds[0]["probs"]) - 1) < 1e-6
     m = json.loads((out / "metrics.json").read_text())
     assert m["n"] == 4 and m["n_pairs"] == 2 and m["variant"] == "examples"
     assert {"ece_15", "brier", "pair_accuracy", "hard", "reference"} <= set(m)
-    assert m["run"]["temperatures"] == {"choice": 2.0} and m["run"]["n_truncated"] == 4
+    assert m["run"]["temperatures"] == {"choice": 2.0} and m["run"]["n_skipped_overlong"] == 0
     assert m["run"]["bench_revision"] == "abc" and m["overlap"] == {"share": 0.0, "n_items": 4}
 
 
@@ -75,3 +75,66 @@ def test_bench_overlap_updates_meta(tmp_path):
 
 def test_bench_overlap_without_rows_fails(tmp_path):
     assert cli.main(["bench", "overlap", "--name", "jevbench", "--dir", str(tmp_path), "--train", "x"]) == 2
+
+
+def _rjudge_rows(tmp_path, long_words=0):
+    rec = {"id": 1, "profile": "p", "label": 1, "attack_type": "unintended",
+           "contents": [[{"role": "user", "content": "do it"}, {"role": "agent", "thought": "t", "action": "a"}]]}
+    long = {**rec, "id": 2, "label": 0,
+            "contents": [[{"role": "user", "content": "w " * long_words}, {"role": "agent", "thought": "t", "action": "a"}]]}
+    rows = rjudge.convert({"data/IoT/home.json": [rec, long, {**rec, "id": 3}]})
+    path = tmp_path / "rows.chat.jsonl"
+    write_rows(path, rows)
+    return path
+
+
+def test_bench_score_refuses_overlong_rows(tmp_path, monkeypatch, tok, tiny_model, capsys):
+    monkeypatch.setattr(infer, "load", lambda m, b: (tok, tiny_model))
+    rows = _rjudge_rows(tmp_path, long_words=300)
+    out = tmp_path / "o"
+    assert cli.main(["bench", "score", "--name", "rjudge", "--model", "m", "--rows", str(rows),
+                     "--out", str(out), "--max-len", "200"]) == 2
+    msg = capsys.readouterr().out
+    assert "1 rows are longer than --max-len 200" in msg and "rjudge:IoT/home:2" in msg
+    assert not (out / "metrics.json").exists()
+
+
+def test_bench_score_skip_overlong_records_ids(tmp_path, monkeypatch, tok, tiny_model):
+    monkeypatch.setattr(infer, "load", lambda m, b: (tok, tiny_model))
+    rows = _rjudge_rows(tmp_path, long_words=300)
+    out = tmp_path / "o"
+    assert cli.main(["bench", "score", "--name", "rjudge", "--model", "m", "--rows", str(rows),
+                     "--out", str(out), "--max-len", "200", "--skip-overlong"]) == 0
+    m = json.loads((out / "metrics.json").read_text())
+    assert m["n"] == 2 and m["run"]["n_skipped_overlong"] == 1
+    assert m["run"]["skipped_overlong_ids"] == ["rjudge:IoT/home:2"]
+    ids = [json.loads(line)["id"] for line in (out / "predictions.jsonl").read_text().splitlines()]
+    assert ids == ["rjudge:IoT/home:1", "rjudge:IoT/home:3"]
+
+
+def test_eval_still_truncates_rather_than_refusing(tmp_path, monkeypatch, tok, tiny_model, make_row):
+    """jeff eval keeps infer.py's keep-the-last-max-len-tokens behaviour (dev results stay comparable)."""
+    monkeypatch.setattr(infer, "load", lambda m, b: (tok, tiny_model))
+    data = tmp_path / "d.chat.jsonl"
+    data.write_text(json.dumps(make_row("r0", {"A": "x", "B": "y"}, "A", state="w " * 300)) + "\n")
+    assert cli.main(["eval", "--model", "m", "--data", str(data), "--out", str(tmp_path / "r.json"),
+                     "--max-len", "50"]) == 0
+
+
+def test_decidebench_is_scored_once_unless_forced(tmp_path, monkeypatch, tok, tiny_model, capsys):
+    monkeypatch.setattr(infer, "load", lambda m, b: (tok, tiny_model))
+    test, ex = _items()
+    rows = tmp_path / "rows_zeroshot.chat.jsonl"
+    write_rows(rows, B.convert(test, ex)["zeroshot"])
+    out = tmp_path / "o"
+    args = ["bench", "score", "--name", "decidebench", "--model", "m", "--rows", str(rows), "--out", str(out)]
+    assert cli.main(args) == 0
+    (out / "metrics.json").write_text('{"first": true}')
+    assert cli.main(args) == 2
+    assert "scored once" in capsys.readouterr().out
+    assert json.loads((out / "metrics.json").read_text()) == {"first": True}
+    assert cli.main(args + ["--force"]) == 0
+    assert json.loads((out / "metrics.json").read_text())["n"] == 4
+    # other benchmarks may be rescored into the same directory
+    rj = _rjudge_rows(tmp_path)
+    assert cli.main(["bench", "score", "--name", "rjudge", "--model", "m", "--rows", str(rj), "--out", str(out)]) == 0

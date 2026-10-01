@@ -489,13 +489,15 @@ def _bench_variant(rows_path: Path) -> str | None:
     return m.group(1) if m else None
 
 
-def _n_truncated(tok, rows: list[dict], max_len: int) -> int:
-    n = 0
+def _overlong_ids(tok, rows: list[dict], max_len: int) -> list[str]:
+    """Ids of rows whose prompt is longer than max_len tokens (letter_logits would cut their start)."""
+    out = []
     for r in rows:
         ids = tok.apply_chat_template(r["messages"], add_generation_prompt=True, tokenize=True, enable_thinking=False)
         ids = ids["input_ids"] if hasattr(ids, "input_ids") else ids
-        n += len(ids) > max_len
-    return n
+        if len(ids) > max_len:
+            out.append(r["id"])
+    return out
 
 
 def cmd_bench_score(args) -> int:
@@ -503,10 +505,21 @@ def cmd_bench_score(args) -> int:
     from jeff.bench import score as bench_score
     from jeff.bench.common import META_FILE, read_rows
     from jeff.train import infer
+    out = Path(args.out)
+    if args.name == "decidebench" and (out / "metrics.json").exists() and not args.force:
+        print(f"error: {out / 'metrics.json'} exists; the DecideBench test is scored once (pass --force to rerun)")
+        return 2
     rows_path = Path(args.rows)
     rows = read_rows(rows_path)
     temps = json.loads(Path(args.calibration).read_text())["temperatures"] if args.calibration else {}
     tok, model = infer.load(args.model, args.base)
+    overlong = _overlong_ids(tok, rows, args.max_len)
+    if overlong and not args.skip_overlong:
+        print(f"error: {len(overlong)} rows are longer than --max-len {args.max_len} tokens "
+              f"(e.g. {', '.join(overlong[:5])}); raise --max-len or pass --skip-overlong")
+        return 2
+    skip = set(overlong)
+    rows = [r for r in rows if r["id"] not in skip]
     logits = infer.letter_logits(model, tok, rows, max_len=args.max_len, batch_tokens=args.batch_tokens)
     preds = [bench_score.prediction(r, z, temps.get(r["type"], 1.0)) for r, z in zip(rows, logits)]
     variant = _bench_variant(rows_path)
@@ -516,10 +529,9 @@ def cmd_bench_score(args) -> int:
     ov = meta.get("overlap")
     report["run"] = {"model": args.model, "base": args.base, "rows": str(rows_path), "variant": variant,
                      "calibration": args.calibration, "temperatures": temps or None, "max_len": args.max_len,
-                     "n_truncated": _n_truncated(tok, rows, args.max_len), "git_sha": _git_sha(),
-                     "bench_revision": meta.get("revision")}
+                     "n_skipped_overlong": len(overlong), "skipped_overlong_ids": overlong,
+                     "git_sha": _git_sha(), "bench_revision": meta.get("revision")}
     report["overlap"] = {k: v for k, v in ov.items() if k != "overlapping_ids"} if ov else None
-    out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     keep = ("id", "letters", "probs", "pred", "gold")
     (out / "predictions.jsonl").write_text(
@@ -641,7 +653,11 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--rows", required=True, help="rows*.chat.jsonl from jeff bench build")
     p.add_argument("--calibration", help="calibration JSON from jeff calibrate (default T=1)")
     p.add_argument("--out", required=True, help="directory for predictions.jsonl and metrics.json")
-    p.add_argument("--max-len", type=int, default=16384, help="longer prompts keep their last max-len tokens")
+    p.add_argument("--max-len", type=int, default=16384,
+                   help="rows longer than this are an error unless --skip-overlong")
+    p.add_argument("--skip-overlong", action="store_true",
+                   help="leave rows longer than --max-len out of scoring (ids recorded in metrics.json)")
+    p.add_argument("--force", action="store_true", help="decidebench: overwrite an existing <out>/metrics.json")
     p.add_argument("--batch-tokens", type=int, default=16384)
     p.set_defaults(func=cmd_bench_score)
     p = bsub.add_parser("overlap", help="share of benchmark states sharing a normalised 8-gram with training")
