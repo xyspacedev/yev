@@ -83,7 +83,7 @@ def _violations(source: str) -> list[str]:
     return violations
 
 
-ALLOWED_TEST_SET_READERS = {"decidebench.py", "filters/contamination.py"}
+ALLOWED_TEST_SET_READERS = {"decidebench.py", "filters/contamination.py", "bench/decidebench.py"}
 
 
 def test_only_allowed_modules_touch_the_test_set():

@@ -38,6 +38,12 @@ def _headline(preds: list[dict]) -> dict:
             "group_accuracy": (sum(g) / len(g)) if g else None, "n_groups": len(g)}
 
 
+def calibration(preds: list[dict]) -> dict:
+    """ECE (15 bins on the top-choice probability) and multi-class Brier; preds need `answer` and `probs`."""
+    h = _headline([{**x, "source": x.get("source"), "cluster_id": None} for x in preds])
+    return {"ece": h.get("ece"), "brier": h.get("brier")}
+
+
 def _by(preds, field):
     out = defaultdict(list)
     for x in preds:

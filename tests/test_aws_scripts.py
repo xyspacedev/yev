@@ -95,3 +95,9 @@ def test_run_bg_returns_before_job_finishes(tmp_path):
                        env=env, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     assert time.time() - t0 < 3
+
+
+def test_sync_pushes_only_mix_dev_examples_and_bench():
+    t = (Path("scripts/aws") / "sync.sh").read_text()
+    sources = re.findall(r"^\s*rsync .*\"\" (data/\S*) ", t, re.M)
+    assert sources == ["data/mix/stage0/", "data/dev/decidebench_examples.jsonl", "data/bench/"]

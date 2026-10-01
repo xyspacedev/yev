@@ -473,6 +473,84 @@ def cmd_calibrate(args) -> int:
     return 0
 
 
+BENCH_DIR = Path("data/bench")
+
+
+def cmd_bench_build(args) -> int:
+    from jeff.bench import BENCHES
+    out = Path(args.out or BENCH_DIR / args.name)
+    meta = BENCHES[args.name].build(out)
+    print(json.dumps(meta, indent=2))
+    return 0
+
+
+def _bench_variant(rows_path: Path) -> str | None:
+    m = re.match(r"rows_(\w+)\.chat\.jsonl$", rows_path.name)
+    return m.group(1) if m else None
+
+
+def _n_truncated(tok, rows: list[dict], max_len: int) -> int:
+    n = 0
+    for r in rows:
+        ids = tok.apply_chat_template(r["messages"], add_generation_prompt=True, tokenize=True, enable_thinking=False)
+        ids = ids["input_ids"] if hasattr(ids, "input_ids") else ids
+        n += len(ids) > max_len
+    return n
+
+
+def cmd_bench_score(args) -> int:
+    from jeff.bench import BENCHES
+    from jeff.bench import score as bench_score
+    from jeff.bench.common import META_FILE, read_rows
+    from jeff.train import infer
+    rows_path = Path(args.rows)
+    rows = read_rows(rows_path)
+    temps = json.loads(Path(args.calibration).read_text())["temperatures"] if args.calibration else {}
+    tok, model = infer.load(args.model, args.base)
+    logits = infer.letter_logits(model, tok, rows, max_len=args.max_len, batch_tokens=args.batch_tokens)
+    preds = [bench_score.prediction(r, z, temps.get(r["type"], 1.0)) for r, z in zip(rows, logits)]
+    variant = _bench_variant(rows_path)
+    report = BENCHES[args.name].metrics(preds, variant=variant)
+    meta_path = rows_path.parent / META_FILE
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    ov = meta.get("overlap")
+    report["run"] = {"model": args.model, "base": args.base, "rows": str(rows_path), "variant": variant,
+                     "calibration": args.calibration, "temperatures": temps or None, "max_len": args.max_len,
+                     "n_truncated": _n_truncated(tok, rows, args.max_len), "git_sha": _git_sha(),
+                     "bench_revision": meta.get("revision")}
+    report["overlap"] = {k: v for k, v in ov.items() if k != "overlapping_ids"} if ov else None
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    keep = ("id", "letters", "probs", "pred", "gold")
+    (out / "predictions.jsonl").write_text(
+        "".join(json.dumps({k: p[k] for k in keep}, ensure_ascii=False) + "\n" for p in preds), encoding="utf-8")
+    _write_json(out / "metrics.json", report)
+    print(json.dumps({k: v for k, v in report.items() if k not in ("reference", "by_family", "by_category")}, indent=2))
+    return 0
+
+
+def cmd_bench_overlap(args) -> int:
+    from jeff.bench.common import META_FILE, iter_rows, overlap, read_rows, write_json
+    d = Path(args.dir or BENCH_DIR / args.name)
+    files = sorted(d.glob("rows*.chat.jsonl"))
+    if not files:
+        print(f"no rows*.chat.jsonl in {d}; run jeff bench build --name {args.name} first")
+        return 2
+    seen: dict[str, dict] = {}
+    for f in files:
+        for r in read_rows(f):
+            seen.setdefault(r["id"], r)
+    rep = overlap(list(seen.values()), iter_rows(args.train))
+    rep["train"] = args.train
+    meta_path = d / META_FILE
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    meta["overlap"] = rep
+    write_json(meta_path, meta)
+    write_json(d / "overlap.json", rep)
+    print(json.dumps({k: v for k, v in rep.items() if k != "overlapping_ids"}, indent=2))
+    return 0
+
+
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jeff")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -549,6 +627,28 @@ def make_parser() -> argparse.ArgumentParser:
         if name == "eval":
             p.add_argument("--calibration", help="calibration JSON from jeff calibrate (default T=1)")
         p.set_defaults(func=func)
+    from jeff.bench import BENCHES
+    bench = sub.add_parser("bench", help="external benchmarks: build rows, score a model, check overlap")
+    bsub = bench.add_subparsers(dest="bench_command", required=True)
+    p = bsub.add_parser("build", help="download a benchmark and write chat rows (network)")
+    p.add_argument("--name", required=True, choices=sorted(BENCHES))
+    p.add_argument("--out", help="default data/bench/<name>")
+    p.set_defaults(func=cmd_bench_build)
+    p = bsub.add_parser("score", help="score a model on benchmark rows (offline)")
+    p.add_argument("--name", required=True, choices=sorted(BENCHES))
+    p.add_argument("--model", required=True, help="LoRA adapter dir or full model dir")
+    p.add_argument("--base", help="base model path (required for adapters; tokenizer source)")
+    p.add_argument("--rows", required=True, help="rows*.chat.jsonl from jeff bench build")
+    p.add_argument("--calibration", help="calibration JSON from jeff calibrate (default T=1)")
+    p.add_argument("--out", required=True, help="directory for predictions.jsonl and metrics.json")
+    p.add_argument("--max-len", type=int, default=16384, help="longer prompts keep their last max-len tokens")
+    p.add_argument("--batch-tokens", type=int, default=16384)
+    p.set_defaults(func=cmd_bench_score)
+    p = bsub.add_parser("overlap", help="share of benchmark states sharing a normalised 8-gram with training")
+    p.add_argument("--name", required=True, choices=sorted(BENCHES))
+    p.add_argument("--train", required=True, help="training *.chat.jsonl")
+    p.add_argument("--dir", help="default data/bench/<name>")
+    p.set_defaults(func=cmd_bench_overlap)
     return parser
 
 
