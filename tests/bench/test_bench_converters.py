@@ -184,3 +184,9 @@ def test_rjudge_metrics_unsafe_positive_by_category():
     assert m["f1"] == pytest.approx(2 / 3) and m["recall"] == 1.0 and m["specificity"] == 0.0
     assert m["by_category"]["Program"]["f1"] == 1.0 and m["by_attack_type"]["injection"]["fp"] == 1
     assert m["reference"]["f1_original_paper"]["GPT-4o"] == 74.45
+
+
+def test_jevbench_object_state_is_serialised():
+    item = dict(JEV["original"][0], state={"policy": ["a", "b"], "request": "refund"})
+    row = jevbench.convert({"original": [item]})[0]
+    assert json.loads(user(row)["state"]) == {"policy": ["a", "b"], "request": "refund"}

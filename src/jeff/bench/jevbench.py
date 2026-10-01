@@ -58,8 +58,11 @@ def to_decision(item: dict, tier: str) -> Decision:
         soft = {_key(k): float(v) for k, v in gp.items()}
         total = sum(soft.values())
         soft = {k: v / total for k, v in soft.items()}
+    state = item["state"]
+    if not isinstance(state, str):  # some hard items carry a JSON-object state
+        state = json.dumps(state, ensure_ascii=False)
     return Decision(
-        id=f"jevbench:{item['id']}", type=kind, state=item["state"], question=q["instructions"],
+        id=f"jevbench:{item['id']}", type=kind, state=state, question=q["instructions"],
         options=options, gold=gold, family=item["family"], source=NAME, licence="mit", split="dev",
         cluster_id=item.get("group"), soft_gold=soft,
     ).validate()
@@ -89,6 +92,8 @@ def build(out: Path) -> dict:
             "Upper-case labels (S, M, L, XL) lower-cased to fit our key schema.",
             "probability-family items carry gold_probs as the soft target; accuracy is argmax vs `expected`.",
             "Rendered with jeff.format.user_turn (training format).",
+            f"{sum(not isinstance(i['state'], str) for t in TIERS for i in items[t])} items have a JSON-object "
+            "state; it is serialised with json.dumps (ensure_ascii=False) into the state string.",
         ],
     }
     write_json(out / META_FILE, meta)
