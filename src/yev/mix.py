@@ -14,9 +14,13 @@ from pathlib import Path
 from yev.filters.contamination import Fingerprints, normalize_tokens
 from yev.filters.pipeline import assert_clean
 from yev.format import ExamplePool, render
+from yev.generators.padding import FAMILY as PADDED_FAMILY
 from yev.generators.padding import doc_id
 from yev.licences import is_allowed
 from yev.schema import Decision, read_jsonl, write_jsonl
+
+
+DISTRACTOR_FAMILIES = {"invoice_ledger", "long_workflow"}  # documents padding may use as filler
 
 
 def state_key(d: Decision) -> str:
@@ -143,6 +147,14 @@ def build_mix(recipe: dict, fingerprints: Fingerprints) -> MixResult:
     def is_distractor(d: Decision) -> bool:
         return bool(distractors) and doc_id(d.state) in distractors
 
+    if distractors:
+        known = {doc_id(d.state) for rows in pools.values() for d in rows if d.family in DISTRACTOR_FAMILIES}
+        unresolved = sorted(distractors - known)
+        if unresolved:
+            raise ValueError(f"{len(unresolved)} distractor ids match no {sorted(DISTRACTOR_FAMILIES)} document "
+                             f"in the recipe: {unresolved[:5]}")
+        report["distractors"] = {"ids": len(distractors), "resolved": len(distractors), "unresolved": 0}
+
     done: dict[str, tuple[list[Decision], list[Decision]]] = {}
     for block in recipe["blocks"]:
         rng = random.Random(f"{seed}:{block['name']}")
@@ -169,12 +181,20 @@ def build_mix(recipe: dict, fingerprints: Fingerprints) -> MixResult:
         def eligible(d: Decision) -> bool:
             return not (_links(d) & train_links) and unit_key(d) not in forced
 
+        def check_min(kind: str, got: int, key: str) -> None:
+            need = block.get(key, 0)
+            if got < need:
+                blocked = len({unit_key(d) for d in pool if not eligible(d)})
+                raise ValueError(f"block {block['name']}: {kind} holds {got} rows, below {key} {need}; "
+                                 f"{blocked} units blocked (padding distractors or tied to train rows)")
+
         held: list[Decision] = []
         share = block.get("dev_share", 0.0)
         if share > 0:
             chosen = _stratified_holdout(pool, share, rng, block.get("dev_min_rows", 0), eligible=eligible)
             held = [replace(d, split="dev") for d in pool if holdout_key(d) in chosen]
             pool = [d for d in pool if holdout_key(d) not in chosen]
+            check_min("dev", len(held), "dev_min_rows")
         cal_held: list[Decision] = []
         cal_share = block.get("calibration_share", 0.0)
         if cal_share > 0:
@@ -183,6 +203,7 @@ def build_mix(recipe: dict, fingerprints: Fingerprints) -> MixResult:
                                          eligible=eligible)
             cal_held = [replace(d, split="calibration") for d in pool if holdout_key(d) in chosen]
             pool = [d for d in pool if holdout_key(d) not in chosen]
+            check_min("calibration", len(cal_held), "calibration_min_rows")
         taken = [replace(d, split="train") for d in take_units(pool, block["rows"], rng, first=forced)]
         train.extend(taken)
         dev.extend(held)
@@ -208,6 +229,12 @@ def build_mix(recipe: dict, fingerprints: Fingerprints) -> MixResult:
     overlap = {unit_key(d) for d in train} & {unit_key(d) for d in dev}
     if overlap:
         raise ValueError(f"{len(overlap)} units appear in both train and dev")
+    split_of = {d.id: d.split for d in train + dev + block_cal}
+    crossed = [d.id for d in train + dev + block_cal if d.family == PADDED_FAMILY
+               and split_of.get((d.metadata or {}).get("orig_id"), d.split) != d.split]
+    if crossed:
+        raise ValueError(f"{len(crossed)} padded rows sit in a different split from their originals "
+                         f"(add split_follows): {crossed[:5]}")
     cal_units = {unit_key(d) for d in block_cal}
     overlap = cal_units & {unit_key(d) for d in train + dev}
     if overlap:

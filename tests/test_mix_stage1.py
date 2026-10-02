@@ -299,3 +299,64 @@ def test_recipe_without_new_keys_keeps_stage0_shape(tmp_path):
                     NO_BENCH)
     assert set(res.report["blocks"]["x"]) == {"available", "train", "dev", "shortfall"}
     assert res.calibration == []
+
+
+# ---------------------------------------------------------------- fix round 2
+
+
+def _distractor_setup(tmp_path, n_docs=40, used_every=2, extra_ids=()):
+    from yev.generators.padding import doc_id
+
+    inv = [dec(f"invoices:0:{k}:{j}", "abc"[j % 3], family="invoice_ledger", state=f"Invoice document {k}.",
+               cluster=f"invoices:0:{k}") for k in range(n_docs) for j in range(6)]
+    used = [f"Invoice document {k}." for k in range(0, n_docs, used_every)]
+    short = [dec(f"s:{i}", "abc"[i % 3], family="returns_v2") for i in range(50)]
+    pads = [dec(f"pad:{d.id}", d.gold, family="long_padding", state=f"{used[i % len(used)]}\n\n{d.state}",
+                cluster=f"pad:{d.id}",
+                metadata={"orig_id": d.id, "distractor_ids": [doc_id(used[i % len(used)]), *extra_ids]})
+            for i, d in enumerate(short)]
+    for name, rows in (("inv", inv), ("short", short), ("pad", pads)):
+        write_jsonl(tmp_path / f"{name}.jsonl", rows)
+    return lambda hold: _recipe([
+        {"name": "inv", "files": [str(tmp_path / "inv.jsonl")], "rows": 10_000, **hold},
+        {"name": "short", "files": [str(tmp_path / "short.jsonl")], "rows": 10_000},
+        {"name": "pad", "files": [str(tmp_path / "pad.jsonl")], "rows": 10_000},
+    ])
+
+
+def test_unmeetable_held_out_minimums_raise(tmp_path):
+    make = _distractor_setup(tmp_path, n_docs=20, used_every=1)  # every document is filler: nothing can be held out
+    with pytest.raises(ValueError, match=r"block inv: dev .* dev_min_rows 60;.* 20 units blocked"):
+        build_mix(make({"dev_share": 0.05, "dev_min_rows": 60}), NO_BENCH)
+    make = _distractor_setup(tmp_path, n_docs=20, used_every=2)  # 10 free documents = 60 rows
+    with pytest.raises(ValueError, match=r"block inv: calibration .* calibration_min_rows 30;.* 10 units blocked"):
+        build_mix(make({"dev_share": 0.05, "dev_min_rows": 60, "calibration_share": 0.03,
+                        "calibration_min_rows": 30}), NO_BENCH)
+    res = build_mix(make({"dev_share": 0.05, "dev_min_rows": 30, "calibration_share": 0.03,
+                          "calibration_min_rows": 30}), NO_BENCH)
+    assert res.report["blocks"]["inv"]["dev"] == res.report["blocks"]["inv"]["calibration"] == 30
+
+
+def test_unresolved_distractor_ids_raise(tmp_path):
+    make = _distractor_setup(tmp_path)
+    res = build_mix(make({}), NO_BENCH)
+    assert res.report["distractors"] == {"ids": 20, "resolved": 20, "unresolved": 0}
+    make = _distractor_setup(tmp_path, extra_ids=("doc:0000000000",))
+    with pytest.raises(ValueError, match="1 distractor ids .*doc:0000000000"):
+        build_mix(make({}), NO_BENCH)
+
+
+def test_padded_row_in_other_split_than_its_original_raises(tmp_path):
+    orig = [dec(f"rv2:{i}", "abc"[i % 3], family="returns_v2") for i in range(200)]
+    padded = [dec(f"pad:{d.id}", d.gold, family="long_padding", state=f"Filler. {d.state}", cluster=f"pad:{d.id}",
+                  metadata={"orig_id": d.id}) for d in orig]
+    write_jsonl(tmp_path / "rv2.jsonl", orig)
+    write_jsonl(tmp_path / "pad.jsonl", padded)
+    blocks = [
+        {"name": "rv2", "files": [str(tmp_path / "rv2.jsonl")], "rows": 1000, "dev_share": 0.2},
+        {"name": "pad", "files": [str(tmp_path / "pad.jsonl")], "rows": 1000, "dev_share": 0.2},
+    ]
+    with pytest.raises(ValueError, match="padded rows sit in a different split from their originals"):
+        build_mix(_recipe(blocks), NO_BENCH)
+    blocks[1]["split_follows"] = ["rv2"]
+    build_mix(_recipe(blocks), NO_BENCH)
