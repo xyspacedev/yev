@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import random
 import re
+import string
 from collections import Counter, defaultdict
 from dataclasses import replace
 
@@ -28,7 +29,8 @@ def parse_letter(text: str, n_options: int) -> str | None:
     """The answer letter, or None.
 
     Items with up to 6 options keep the original rule (first standalone A-F, case-insensitive). Wider items, whose
-    range reaches I, read: a bare letter ("B", "(b)", "J."), else "Answer: X" / "answer is X", else the one
+    range reaches I, read: a bare letter ("B", "(b)", "J."), else "Answer: X" / "answer is X" when that letter is
+    the whole rest of the reply (punctuation and whitespace stripped), else the one
     standalone capital letter in range, ignoring the pronoun I ("I think B"); several candidates mean no answer."""
     text = str(text)
     if n_options <= CLUSTER_LETTERS:
@@ -38,9 +40,11 @@ def parse_letter(text: str, n_options: int) -> str | None:
     bare = re.fullmatch(rf"\s*\(?([A-{last}a-{last.lower()}])\)?[.)]?\s*", text)
     if bare:
         return bare.group(1).upper()
-    said = re.search(rf"\banswer\s*(?:is)?\s*[:=]?\s*\(?([A-{last}a-{last.lower()}])\b", text, re.I)
-    if said:
-        return said.group(1).upper()
+    said = re.search(r"\banswer\b(?:\s+is\b)?\s*[:=]?(.*)\Z", text, re.I | re.S)
+    if said:  # only when the letter is all that follows "Answer:"; otherwise fall through to the rules below
+        rest = said.group(1).strip(string.whitespace + string.punctuation)
+        if re.fullmatch(rf"[A-{last}a-{last.lower()}]", rest):
+            return rest.upper()
     candidates = set(re.findall(rf"\b([A-{last}])\b", _PRONOUN_I.sub(" ", text)))
     return candidates.pop() if len(candidates) == 1 else None
 

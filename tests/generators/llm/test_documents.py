@@ -411,3 +411,14 @@ def test_score_answers_reads_i_think_b_on_ten_options():
         answers.append({"item_id": i, "letter": f"I think {letter}"})
     kept, stats = score_answers(ds, key, answers, cluster_filter=None)
     assert len(kept) == 1 and stats["bad_letter"] == 0
+
+
+def test_answer_prefix_only_when_letter_is_last():
+    from yev.generators.llm.check import parse_letter
+    # "Answer:" counts only when one in-range letter is all that follows; otherwise the general rules apply
+    assert parse_letter("Answer: I think B", 10) == "B"   # pronoun I ignored, B is the only candidate
+    assert parse_letter("Answer: A or B", 10) is None     # two candidates
+    assert parse_letter("Answer: a bit of B", 10) == "B"  # lowercase "a" is not a candidate
+    assert parse_letter("Answer: J", 9) is None           # J is out of range for 9 options
+    assert parse_letter("Answer: C.", 9) == "C"
+    assert parse_letter("answer is (g)", 10) == "G"
