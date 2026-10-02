@@ -7,6 +7,7 @@ runs them in its threadpool; the Engine serialises forward passes itself.
 
 from __future__ import annotations
 
+import logging
 import math
 
 from fastapi import FastAPI, Request
@@ -25,6 +26,8 @@ from jeff.serve.contract import (
 )
 from jeff.serve.mapping import Unsupported
 
+log = logging.getLogger(__name__)
+
 
 def create_app(engine, model_name: str = "yev-4b") -> FastAPI:
     app = FastAPI(title="jeff serve", docs_url=None, redoc_url=None, openapi_url=None)
@@ -32,6 +35,13 @@ def create_app(engine, model_name: str = "yev-4b") -> FastAPI:
     @app.exception_handler(Unsupported)
     def _unsupported(request: Request, exc: Unsupported) -> JSONResponse:
         return JSONResponse(ErrorResponse.unsupported(str(exc)).model_dump(), status_code=422)
+
+    @app.exception_handler(Exception)
+    def _internal(request: Request, exc: Exception) -> JSONResponse:
+        # A bug or a CUDA OOM: a JSON 500 (the SDK retries 5xx and shows `error.message`), never "unsupported".
+        log.error("internal error on %s", request.url.path, exc_info=exc)
+        msg = f"{type(exc).__name__}: {exc}"
+        return JSONResponse({"error": {"type": "internal_error", "message": msg}}, status_code=500)
 
     @app.exception_handler(RequestValidationError)
     def _invalid(request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -55,7 +65,7 @@ def create_app(engine, model_name: str = "yev-4b") -> FastAPI:
         out = ChatResponse.build(model=model_name, content=letter,
                                  prompt_tokens=engine.n_tokens(req.messages), completion_tokens=1)
         if req.logprobs:
-            top = [{"token": L, "logprob": math.log(p) if p > 0 else -math.inf, "bytes": list(L.encode())}
+            top = [{"token": L, "logprob": math.log(max(p, 1e-300)), "bytes": list(L.encode())}
                    for L, p in sorted(probs.items(), key=lambda kv: -kv[1])]
             out.choices[0].logprobs = {"content": [{**top[0], "top_logprobs": top}]}
         return out

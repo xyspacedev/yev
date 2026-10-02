@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from jeff.format import LETTERS
-from jeff.serve.mapping import MAX_LETTERS, Unsupported, to_answers, to_rows
+from jeff.serve.mapping import MAX_LETTERS, NOUL_NO, NOUL_YES, Unsupported, to_answers, to_rows
 from jeff.train import readout
 from jeff.train.data import letter_token_ids, prompt_ids
 from jeff.train.infer import letter_logits
@@ -42,6 +42,19 @@ def _message(m: Any) -> dict:
     if isinstance(m, Mapping):
         return {"role": m["role"], "content": m["content"]}
     return {"role": m.role, "content": m.content}
+
+
+def _infer_type(messages: list[dict]) -> str | None:
+    """The question type behind a chat turn, when its option keys reveal it (the mapping's conventions)."""
+    try:
+        keys = [o["key"] for o in json.loads(messages[-1]["content"])["options"]]
+    except (ValueError, TypeError, KeyError):
+        return None
+    if keys == [NOUL_YES, NOUL_NO]:
+        return "noul"
+    if keys == [str(i) for i in range(len(keys))]:
+        return "score"
+    return "choice"
 
 
 def _labels(messages: list[dict]) -> list[str]:
@@ -100,13 +113,19 @@ class Engine:
         return to_answers(questions, rows, probs), {"input_tokens": sum(lengths), "output_tokens": 0}
 
     def chat_probs(self, messages) -> dict[str, float]:
-        """Probability of each option letter of the final user turn (our decision format), at T = 1."""
+        """Probability of each option letter of the final user turn (our decision format).
+
+        The calibrated temperature is applied for the question's type when the option keys reveal it
+        (["yes", "no"] is noul, "0".."n-1" is score, anything else is choice); a turn that does not
+        parse to options uses T = 1. Argmax is the same either way.
+        """
         msgs = [_message(m) for m in messages]
         labels = _labels(msgs)
         rows = [{"messages": msgs}]
         self._checked_lengths(rows)
         z = self._logits(rows, max(LETTERS.index(L) for L in labels) + 1)[0]
-        p = readout.probs([z[LETTERS.index(L)] for L in labels], len(labels))
+        t = self.temperature(_infer_type(msgs) or "")
+        p = readout.probs([z[LETTERS.index(L)] for L in labels], len(labels), t)
         return dict(zip(labels, p))
 
     def chat(self, messages) -> str:
