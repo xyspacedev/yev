@@ -10,7 +10,7 @@ def test_scripts_require_env_and_contain_no_host():
         r = subprocess.run(["bash", str(p), "echo"], env={"PATH": os.environ["PATH"]}, capture_output=True, text=True)
         assert r.returncode == 2 and "JEFF_TRAIN_" in r.stderr
     for p in Path("scripts/aws").glob("*.sh"):
-        t = p.read_text()
+        t = p.read_text().replace("127.0.0.1", "")  # loopback is the server address, not a host
         assert not re.search(r"\b\d{1,3}(\.\d{1,3}){3}\b", t) and ".pem" not in t
 
 
@@ -132,3 +132,77 @@ def test_sync_records_git_sha_on_box(tmp_path):
     r = subprocess.run(["bash", "scripts/aws/sync.sh"], cwd=repo, env=genv, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     assert (home / "jeff/GIT_SHA").read_text() == head + "-dirty\n"
+
+
+def _we_env(tmp_path, health_ok=True, fail_wf=None):
+    home = tmp_path / "home"
+    (home / "jeff").mkdir(parents=True)
+    (home / "jeff/GIT_SHA").write_text("abc123-dirty\n")
+    we = tmp_path / "we"
+    we.mkdir()
+    runner = tmp_path / "fakerunner"
+    runner.write_text(
+        '#!/bin/bash\nmkdir -p runs/$1/yev-4b\necho "{\\"wf\\": \\"$1\\"}" > runs/$1/yev-4b/scores.json\n'
+        'echo "{}" > runs/$1/yev-4b/results.json\n'
+        'echo "$TYPESAFE_API_KEY $@" >> "$HOME/runner_calls"\n'
+        f'[ "$1" = "{fail_wf}" ] && exit 1\nexit 0\n'
+    )
+    runner.chmod(0o755)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    curl = bindir / "curl"
+    curl.write_text(f'#!/bin/sh\necho "$@" > "$HOME/curl_args"\nexit {0 if health_ok else 22}\n')
+    curl.chmod(0o755)
+    env = {"PATH": f"{bindir}:{os.environ['PATH']}", "HOME": str(home), "WE_DIR": str(we), "WE_RUNNER": str(runner)}
+    return home, env
+
+
+WF4 = ["invoice_processing", "customer_service", "agent_trace_observability", "security_incidents"]
+
+
+def test_workflowevals_runs_four_workflows_and_collects(tmp_path):
+    import json
+
+    home, env = _we_env(tmp_path)
+    r = subprocess.run(["bash", "scripts/aws/workflowevals.sh"], env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert "http://127.0.0.1:8000/health" in (home / "curl_args").read_text()
+    calls = (home / "runner_calls").read_text().splitlines()
+    assert [c.split()[1] for c in calls] == WF4
+    for c in calls:
+        assert c.split()[0] == "local"
+        assert c.endswith("--model typesafe:jev-1.13.0 --base-url http://127.0.0.1:8000 --name yev-4b")
+    out = home / "workflowevals/yev-4b"
+    for wf in WF4:
+        assert (out / f"{wf}.log").exists()
+        assert json.loads((out / wf / "scores.json").read_text()) == {"wf": wf}
+        assert (out / wf / "results.json").exists()
+    meta = json.loads((out / "run_meta.json").read_text())
+    assert meta["jeff_git_sha"] == "abc123-dirty"
+    assert meta["workflowevals_commit"] == "unknown"  # the fake WE_DIR is not a git checkout
+    assert list(meta["workflows"]) == WF4
+    assert all(isinstance(v["wall_clock_s"], int) and v["exit_code"] == 0 for v in meta["workflows"].values())
+
+
+def test_workflowevals_fails_fast_without_server(tmp_path):
+    home, env = _we_env(tmp_path, health_ok=False)
+    r = subprocess.run(["bash", "scripts/aws/workflowevals.sh"], env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode != 0 and "/health" in r.stderr
+    assert not (home / "runner_calls").exists()
+
+
+def test_workflowevals_continues_after_a_failed_workflow(tmp_path):
+    import json
+
+    home, env = _we_env(tmp_path, fail_wf="customer_service")
+    r = subprocess.run(["bash", "scripts/aws/workflowevals.sh"], env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1
+    meta = json.loads((home / "workflowevals/yev-4b/run_meta.json").read_text())
+    assert meta["workflows"]["customer_service"]["exit_code"] == 1
+    assert meta["workflows"]["security_incidents"]["exit_code"] == 0
+
+
+def test_workflowevals_pins_commit_and_has_no_host():
+    t = Path("scripts/aws/workflowevals.sh").read_text()
+    assert re.search(r"WE_COMMIT:-[0-9a-f]{40}\}", t)
+    assert "JEFF_TRAIN" not in t  # runs on the box; needs no laptop-side env
