@@ -63,8 +63,8 @@ def test_short_shared_phrases_do_not_trigger():
 
 
 def test_first_overlapping_benchmark_wins_in_source_order():
-    both = build_benchmark_fingerprints({"x": [B1], "y": [B1]})
-    assert overlaps_any(dec(1, B1), both) == "x"
+    both = build_benchmark_fingerprints({"x": [B1], "y": [B3]})
+    assert overlaps_any(dec(1, f"{B3}. {B1}"), both) == "x"
 
 
 def test_benchmark_drop_takes_whole_cluster_and_counts_balance():
@@ -193,3 +193,54 @@ def test_bench_fingerprint_command_offline(tmp_path, monkeypatch):
     fp = BenchmarkFingerprints.load(out)
     assert fp.names() == ["toy", "hubby"] and fp.items == {"toy": 1, "hubby": 1}
     assert overlaps_any(dec(1, B3), fp) == "hubby"
+
+
+# --- Fix round 1: boilerplate stoplist and short items ------------------------------------------
+
+STOCK = "is there anything else i can assist you with today"
+
+
+def test_phrase_shared_by_two_benchmarks_does_not_trigger():
+    fp = build_benchmark_fingerprints({"x": [f"Ticket about a lost parcel in Leeds. {STOCK}"],
+                                       "y": [f"Trace of a deploy rollback in prod. {STOCK}"]})
+    assert overlaps_any(dec(1, f"Our own chat. {STOCK}"), fp) is None
+    assert fp.meta["stoplist"]["dropped"]["x"] > 0 and fp.meta["stoplist"]["dropped"]["y"] > 0
+
+
+def test_phrase_repeated_in_20_items_of_one_benchmark_does_not_trigger():
+    items = [f"Case {i} about item number {i * 7}. {STOCK}" for i in range(20)]
+    fp = build_benchmark_fingerprints({"x": items})
+    assert overlaps_any(dec(1, f"Our own chat. {STOCK}"), fp) is None
+    # 19 repeats are below the threshold and still count
+    fp19 = build_benchmark_fingerprints({"x": items[:19]})
+    assert overlaps_any(dec(1, f"Our own chat. {STOCK}"), fp19) == "x"
+
+
+def test_item_specific_ngram_still_triggers_next_to_stoplisted_ones():
+    fp = build_benchmark_fingerprints({"x": [f"{B1}. {STOCK}"], "y": [f"{B2}. {STOCK}"]})
+    assert overlaps_any(dec(1, f"Copied: {B1}."), fp) == "x"
+    assert overlaps_any(dec(2, f"Copied: {B2}."), fp) == "y"
+
+
+def test_short_item_exact_state_match_triggers():
+    fp = build_benchmark_fingerprints({"intents": ["How do I locate my card?", "Balance?"]})
+    assert overlaps_any(dec(1, "how do I locate my CARD"), fp) == "intents"
+    assert overlaps_any(dec(2, "balance"), fp) == "intents"  # exact match works below 4 tokens
+    assert overlaps_any(dec(3, "How do I locate my parcel?"), fp) is None
+
+
+def test_short_item_contained_as_token_run_only_from_4_tokens():
+    fp = build_benchmark_fingerprints({"intents": ["How do I locate my card?", "check my balance"]})
+    assert overlaps_any(dec(1, "Customer wrote: how do I locate my card? Please help."), fp) == "intents"
+    # 3-token item is not matched inside longer text
+    assert overlaps_any(dec(2, "Customer wants to check my balance today."), fp) is None
+    # whole tokens only: "cards" is not "card"
+    assert overlaps_any(dec(3, "Customer wrote: how do I locate my cards?"), fp) is None
+
+
+def test_short_items_roundtrip(tmp_path):
+    fp = build_benchmark_fingerprints({"intents": ["How do I locate my card?"], "x": [B1]})
+    fp.save(tmp_path / "fp.json")
+    loaded = BenchmarkFingerprints.load(tmp_path / "fp.json")
+    assert loaded.short == fp.short
+    assert overlaps_any(dec(1, "so: how do i locate my card"), loaded) == "intents"
