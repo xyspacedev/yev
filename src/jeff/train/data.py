@@ -43,21 +43,33 @@ def make_twin(row: dict, rng: random.Random) -> dict | None:
             "answer": answer, "twin_of": row["id"]}
 
 
-def letter_token_ids(tokenizer) -> list[int]:
+def letter_token_ids(tokenizer, n: int = N_MAX) -> list[int]:
+    """Token ids of the first n letter labels; each must be a single token, all distinct."""
+    assert 1 <= n <= len(LETTERS), f"n = {n} letters, but only {len(LETTERS)} labels exist"
     ids = []
-    for L in LETTERS[:N_MAX]:
+    for L in LETTERS[:n]:
         toks = tokenizer.encode(L, add_special_tokens=False)
         assert len(toks) == 1, f"letter {L!r} is {len(toks)} tokens"
         ids.append(toks[0])
-    assert len(set(ids)) == N_MAX
+    assert len(set(ids)) == n, f"letters {LETTERS[:n]} share token ids: {ids}"
     return ids
 
 
-def encode(row: dict, tokenizer, max_len: int) -> dict | None:
-    ids = tokenizer.apply_chat_template(row["messages"], add_generation_prompt=True, tokenize=True, enable_thinking=False)
+def prompt_ids(tokenizer, messages) -> list[int]:
+    """The prompt's token ids, ending in the generation prompt: the answer is read at the last one."""
+    ids = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=True, enable_thinking=False)
     if hasattr(ids, "input_ids"):
         ids = ids["input_ids"]
-    ids = list(ids)
+    return list(ids)
+
+
+def overlong_ids(tokenizer, rows: list[dict], max_len: int) -> list[str]:
+    """Ids of rows whose prompt is longer than max_len tokens (letter_logits would cut their start)."""
+    return [r["id"] for r in rows if len(prompt_ids(tokenizer, r["messages"])) > max_len]
+
+
+def encode(row: dict, tokenizer, max_len: int) -> dict | None:
+    ids = prompt_ids(tokenizer, row["messages"])
     if len(ids) > max_len:
         return None
     n = len(row["letters"])

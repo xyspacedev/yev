@@ -514,13 +514,8 @@ def _bench_variant(rows_path: Path) -> str | None:
 
 def _overlong_ids(tok, rows: list[dict], max_len: int) -> list[str]:
     """Ids of rows whose prompt is longer than max_len tokens (letter_logits would cut their start)."""
-    out = []
-    for r in rows:
-        ids = tok.apply_chat_template(r["messages"], add_generation_prompt=True, tokenize=True, enable_thinking=False)
-        ids = ids["input_ids"] if hasattr(ids, "input_ids") else ids
-        if len(ids) > max_len:
-            out.append(r["id"])
-    return out
+    from jeff.train.data import overlong_ids
+    return overlong_ids(tok, rows, max_len)
 
 
 def cmd_bench_score(args) -> int:

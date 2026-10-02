@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import torch
 
-from jeff.train.data import letter_token_ids
+from jeff.train.data import N_MAX, letter_token_ids, prompt_ids
 
 
 def logits_at(model, input_ids, attention_mask, pos):
@@ -18,15 +18,21 @@ def logits_at(model, input_ids, attention_mask, pos):
 
 
 @torch.no_grad()
-def letter_logits(model, tokenizer, rows, max_len: int, batch_tokens: int = 16384) -> list[list[float]]:
+def letter_logits(model, tokenizer, rows, max_len: int, batch_tokens: int = 16384,
+                  n_letters: int = N_MAX) -> list[list[float]]:
+    """Logits of the first n_letters letter tokens at each row's answer position, in row order.
+
+    A row longer than max_len keeps only its last max_len tokens; callers that must not truncate
+    check lengths first (jeff.train.data.overlong_ids). Rows with fewer letters than n_letters get
+    the extra logits too; readout.probs uses only a row's own.
+    """
     model.eval()
-    ids_letters = torch.tensor(letter_token_ids(tokenizer))
+    ids_letters = torch.tensor(letter_token_ids(tokenizer, n_letters))
     dev = next(model.parameters()).device
     out: list[list[float] | None] = [None] * len(rows)
     enc = []
     for i, r in enumerate(rows):
-        ids = tokenizer.apply_chat_template(r["messages"], add_generation_prompt=True, tokenize=True, enable_thinking=False)
-        ids = list(ids["input_ids"] if hasattr(ids, "input_ids") else ids)[-max_len:]
+        ids = prompt_ids(tokenizer, r["messages"])[-max_len:]
         enc.append((i, ids))
     enc.sort(key=lambda x: len(x[1]))
     pad = getattr(tokenizer, "pad_token_id", 0) or 0

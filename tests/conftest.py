@@ -1,13 +1,19 @@
-import json, pytest, torch
+import json, pytest
 
 class FakeTok:
     def __init__(self):
         self.vocab = {"<pad>": 0, "<eos>": 1}
         for L in "ABCDEF":
             self.vocab[L] = len(self.vocab)
+        # G-Z are single tokens too, at the top of the tiny model's 2048 ids, which no word reaches
+        # (words take 2..1999, then wrap to 8..2007). They stay out of `vocab` so the ids of A-F
+        # and of every word are unchanged.
+        self.high_letters = {L: 2028 + i for i, L in enumerate("GHIJKLMNOPQRSTUVWXYZ")}
         self.pad_token_id = 0
         self.eos_token_id = 1
     def _id(self, w):
+        if w in self.high_letters:
+            return self.high_letters[w]
         if w not in self.vocab:
             self.vocab[w] = len(self.vocab) % 2000 + 8 if len(self.vocab) >= 2000 else len(self.vocab)
         return self.vocab[w]
@@ -28,6 +34,7 @@ def tok():
 
 @pytest.fixture
 def tiny_model():
+    import torch
     from transformers import LlamaConfig, LlamaForCausalLM
     torch.manual_seed(0)
     cfg = LlamaConfig(vocab_size=2048, hidden_size=32, intermediate_size=64, num_hidden_layers=2,
