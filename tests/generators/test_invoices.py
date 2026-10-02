@@ -1,10 +1,11 @@
+import re
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 from fractions import Fraction
 
 from yev.generators.common import SYNTH_LICENCE
 from yev.generators.dates import fmt
-from yev.generators.invoices import OUTCOMES, Terms, discount_deadline, due_date, generate
+from yev.generators.invoices import OUTCOMES, SLASH_NOTE, Terms, discount_deadline, due_date, generate
 
 
 def by_cluster(ds):
@@ -218,3 +219,55 @@ def test_registered_and_passes_licence_stage():
     assert RULE_GENERATORS["invoice_ledger"] is generate
     specs = {s.name: s for s in SYNTHETIC_SPECS}
     assert all(_licence_ok(d, specs, {}) for d in generate(3, seed=0))
+
+
+# ---------------------------------------------------------------- fix round 1
+
+SLASH_RE = re.compile(r"\b\d{2}/\d{2}/\d{4}\b")
+
+
+def test_slash_note_whenever_any_text_or_option_uses_slash_dates():
+    seen = 0
+    for rows in by_cluster(generate(300, seed=12)).values():
+        texts = [rows[0].state] + [o.description for d in rows for o in d.options]
+        if any(SLASH_RE.search(t) for t in texts):
+            seen += 1
+            assert SLASH_NOTE in rows[0].state, rows[0].id
+    assert seen > 20
+
+
+def test_tax_base_is_line_sum_not_printed_subtotal():
+    n = 0
+    for d in generate(400, seed=13):
+        m = d.metadata
+        assert "never on the printed subtotal" in d.state
+        if m["faults"]["totals"] == "subtotal" and m["kind"] == "tax_correct":
+            n += 1
+            assert d.gold == ("yes" if m["printed_tax"] == _tax(m) else "no")
+    assert n >= 10
+
+
+def test_missed_discount_fault():
+    ds = generate(400, seed=14)
+    docs = by_cluster(ds)
+    disc_docs = [rows[0].metadata for rows in docs.values() if rows[0].metadata["terms"]["kind"] == "discount"]
+    missed = [m for m in disc_docs if m["faults"]["missed_discount"]]
+    assert 0.15 <= len(missed) / len(disc_docs) <= 0.45, (len(missed), len(disc_docs))
+    for rows in docs.values():
+        m = rows[0].metadata
+        if not m["faults"]["missed_discount"]:
+            continue
+        deadline = _anchor(m) + timedelta(days=m["terms"]["disc_days"])
+        assert date.fromisoformat(m["pay_date"]) > deadline and m["discount_claimed"]
+        assert "Early-payment discount: claimed" in rows[0].state
+        for d in rows:
+            if d.metadata["kind"] == "discount":
+                assert d.gold == "no"
+    golds = Counter(d.gold for d in ds if d.metadata["kind"] == "discount")
+    assert golds["yes"] >= 0.2 * sum(golds.values()), golds
+
+
+def test_no_discount_question_on_duplicate_invoices():
+    for d in generate(300, seed=15):
+        if d.metadata["faults"]["duplicate"]:
+            assert d.metadata["kind"] != "discount"

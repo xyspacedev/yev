@@ -37,6 +37,7 @@ NOUL_OPTIONS = [Option("yes", "Yes."), Option("no", "No.")]
 P_LINE_QTY, P_LINE_PRICE = 0.25, 0.25
 P_DUPLICATE, P_MISSING_RECEIPT = 0.12, 0.12
 P_TAX, P_TOTALS, P_BANK = 0.4, 0.3, 0.25
+P_MISSED_DISCOUNT = 0.3  # of packets with discount terms
 
 TAX_RATES = ("5", "6", "6.25", "7", "7.5", "8", "8.25", "8.875", "9.5", "10", "13")
 TOLERANCES = (0, 1, 2, 2, 3, 5, 5)
@@ -196,6 +197,7 @@ class Packet:
     received_date: date
     holidays: tuple[date, ...]
     pay_date: date
+    discount_claimed: bool  # the routing slip deducts the early-payment discount
     approval_cuts: tuple[int, ...]  # cents
     master_bank: str
     invoice_bank: str
@@ -275,7 +277,7 @@ def random_day(rng: random.Random) -> date:
 
 def sample_terms(rng: random.Random) -> Terms:
     r = rng.random()
-    if r < 0.4:
+    if r < 0.3:
         return Terms("net", rng.choice((15, 30, 30, 30, 45, 60)))
     if r < 0.75:
         return Terms("discount", rng.choice((30, 30, 45, 60)), disc_pct=rng.choice((1, 2, 2, 3)),
@@ -384,7 +386,7 @@ def sample_packet(rng: random.Random) -> Packet:
                   exempt_cats=exempt, freight=freight, freight_taxable=freight_taxable, printed_subtotal=0,
                   printed_tax=0, printed_total=0, invoice_no="", ledger=(), terms=Terms("net", 30),
                   invoice_terms=Terms("net", 30), anchor="invoice", invoice_date=date(2024, 1, 1),
-                  received_date=date(2024, 1, 1), holidays=(), pay_date=date(2024, 1, 1), approval_cuts=(),
+                  received_date=date(2024, 1, 1), holidays=(), pay_date=date(2024, 1, 1), discount_claimed=False, approval_cuts=(),
                   master_bank="", invoice_bank="", faults={})
 
     # Tax, possibly wrong.
@@ -468,11 +470,16 @@ def sample_packet(rng: random.Random) -> Packet:
         holidays.add(raw + timedelta(days=rng.randint(-80, 80)))
     holidays_t = tuple(sorted(holidays))
     dl = discount_deadline(terms, a)
-    if dl is not None:
-        pay = dl + timedelta(days=rng.choice((-4, -2, -1, 0, 0, 1, 1, 2, 3, 6)))
+    claimed = False
+    if dl is not None and rng.random() < P_MISSED_DISCOUNT:
+        pay, claimed = dl + timedelta(days=1), True  # missed discount: one day late, yet the slip deducts it
+    elif dl is not None:
+        pay = dl + timedelta(days=rng.choice((-6, -4, -3, -2, -1, -1, 0, 0, 0, 2)))
+        claimed = pay <= dl and rng.random() < 0.7
     else:
         pay = due_date(terms, a, holidays_t) - timedelta(days=rng.randint(0, 25))
     pay = max(pay, received + timedelta(days=3))
+    missed_discount = claimed and pay > dl
 
     # Approval bands: aim the printed total at a random level.
     target = rng.randrange(4)
@@ -488,11 +495,12 @@ def sample_packet(rng: random.Random) -> Packet:
             invoice_bank = f"{rng.randint(0, 9999):04d}"
 
     faults = {"line": line_fault, "line_no": line_no, "duplicate": duplicate, "missing_receipt": missing,
-              "tax": tax_fault, "wrong_rate": wrong_rate, "totals": totals_fault, "bank": bank_fault}
+              "tax": tax_fault, "wrong_rate": wrong_rate, "totals": totals_fault, "bank": bank_fault,
+              "missed_discount": missed_discount}
     return replace(base, printed_subtotal=printed_sub, printed_tax=printed_tax, printed_total=printed_total,
                    invoice_no=inv_no, ledger=tuple(ledger), terms=terms, invoice_terms=invoice_terms,
                    anchor=anchor, invoice_date=inv_date, received_date=received, holidays=holidays_t,
-                   pay_date=pay, approval_cuts=cuts, master_bank=master_bank, invoice_bank=invoice_bank,
+                   pay_date=pay, discount_claimed=claimed, approval_cuts=cuts, master_bank=master_bank, invoice_bank=invoice_bank,
                    faults=faults)
 
 
@@ -539,6 +547,7 @@ class Look:
     policy_last: bool
     show_rate: bool
     show_cat_names: bool
+    option_style: str  # date style of the due-date question's options
 
 
 def render_policy(lk: Look, p: Packet) -> str:
@@ -586,8 +595,8 @@ def render_policy(lk: Look, p: Packet) -> str:
         "B. Sales tax",
         f"B1. The applicable sales tax rate is {p.tax_rate}%. {exempt_txt}",
         f"B2. {freight_txt}",
-        "B3. Tax is computed once on the taxable total of the invoice and rounded to the nearest cent; an exact half "
-        "cent rounds up.",
+        "B3. Tax is computed once on the sum of the taxable line amounts (plus freight when freight is taxable), "
+        "never on the printed subtotal, and rounded to the nearest cent; an exact half cent rounds up.",
         "",
         "C. Matching",
         "C1. Each invoice line is matched to the purchase order line with the same SKU and to the quantity received "
@@ -747,8 +756,15 @@ def build_mail(rng: random.Random, lk: Look, p: Packet, receipt_dates) -> list[t
 
 def render_slip(lk: Look, p: Packet, prepared: date) -> str:
     D = lambda d: fmt(d, lk.doc_style)  # noqa: E731
+    disc = ""
+    if p.discount_claimed:
+        cut = round_half_up(Fraction(p.printed_total * p.terms.disc_pct, 100))
+        disc = (f"Early-payment discount: claimed, {p.terms.disc_pct}% = {money(cut)}; amount to release "
+                f"{money(p.printed_total - cut)}\n")
+    elif p.terms.kind == "discount":
+        disc = f"Early-payment discount: not claimed; amount to release {money(p.printed_total)}\n"
     return (f"ROUTING SLIP\nPacket: {lk.packet_no}\nPrepared by: {lk.ap_clerk}, {D(prepared)}\n"
-            f"Scheduled payment run for this invoice: {D(p.pay_date)}\nCost centre: {lk.cost_centre}\n"
+            f"Scheduled payment run for this invoice: {D(p.pay_date)}\n{disc}Cost centre: {lk.cost_centre}\n"
             f"Reviewer notes: complete the checks below before release.")
 
 
@@ -777,7 +793,7 @@ def render_packet(rng: random.Random, lk: Look, p: Packet) -> str:
     else:
         sections.insert(1, policy)
     text = "\n\n==========\n\n".join(sections)
-    if "slash_dmy" in (lk.doc_style, lk.mail_style):
+    if "slash_dmy" in (lk.doc_style, lk.mail_style, lk.option_style):
         text += f"\n\n{SLASH_NOTE}"
     return text
 
@@ -796,6 +812,7 @@ def sample_look(rng: random.Random, p: Packet) -> Look:
         tax_id=f"TR-{rng.randint(10, 99)}-{rng.randint(1000000, 9999999)}",
         cost_centre=f"CC-{rng.randint(100, 999)}", policy_variant=rng.randrange(2),
         policy_last=rng.random() < 0.3, show_rate=rng.random() < 0.6, show_cat_names=rng.random() < 0.3,
+        option_style=rng.choices(STYLES, (4, 2, 2, 1))[0],
     )
 
 
@@ -812,7 +829,7 @@ def packet_meta(p: Packet, approx_tokens: int) -> dict:
         "invoice_no": p.invoice_no, "ledger_invoice_nos": [x[0] for x in p.ledger],
         "terms": p.terms.meta(), "invoice_terms": p.invoice_terms.meta(), "anchor": p.anchor,
         "invoice_date": p.invoice_date.isoformat(), "received_date": p.received_date.isoformat(),
-        "holidays": [h.isoformat() for h in p.holidays], "pay_date": p.pay_date.isoformat(),
+        "holidays": [h.isoformat() for h in p.holidays], "pay_date": p.pay_date.isoformat(), "discount_claimed": p.discount_claimed,
         "approval_cuts": list(p.approval_cuts), "master_bank": p.master_bank, "invoice_bank": p.invoice_bank,
         "faults": dict(p.faults),
     }
@@ -834,7 +851,7 @@ def q_noul(question: str, gold: bool):
     return "noul", question, NOUL_OPTIONS, "yes" if gold else "no", {}
 
 
-def q_due_date(rng: random.Random, p: Packet):
+def q_due_date(rng: random.Random, p: Packet, style: str):
     a = anchor_date(p)
     other = p.received_date if p.anchor == "invoice" else p.invoice_date
     gold = due_date(p.terms, a, p.holidays)
@@ -850,7 +867,6 @@ def q_due_date(rng: random.Random, p: Packet):
     if p.invoice_terms != p.terms:
         distractors.append(due_date(p.invoice_terms, a, p.holidays))
     distractors += [gold + timedelta(days=s * n) for n in (1, 2, 3, 4, 7) for s in (1, -1)]
-    style = rng.choices(STYLES, (4, 2, 2, 1))[0]
     dates = _pick_options(gold, distractors, rng.randint(4, 6), rng)
     opts = [Option(f"date_{i + 1}", fmt(d, style)) for i, d in enumerate(dates)]
     question = rng.choice(("On what date is the full (net) payment of this invoice due?",
@@ -931,7 +947,7 @@ def q_approval(rng: random.Random, p: Packet):
     return "score", question, opts, str(approval_level(p.printed_total, p.approval_cuts)), {}
 
 
-def build_question(rng: random.Random, kind: str, p: Packet):
+def build_question(rng: random.Random, kind: str, p: Packet, lk: Look):
     if kind == "totals_match":
         return q_noul(rng.choice(("Is the invoice arithmetic correct as printed (subtotal equals the sum of the "
                                   "line amounts, and total equals subtotal plus freight plus printed tax)?",
@@ -949,7 +965,9 @@ def build_question(rng: random.Random, kind: str, p: Packet):
         return q_noul(rng.choice(("Does the remit-to account on the invoice match the vendor master record?",
                                   "Under rule E1, may payment go to the bank account printed on the invoice?")),
                       p.invoice_bank == p.master_bank)
-    return {"due_date": q_due_date, "tax_amount": q_tax_amount, "received_qty": q_received_qty,
+    if kind == "due_date":
+        return q_due_date(rng, p, lk.option_style)
+    return {"tax_amount": q_tax_amount, "received_qty": q_received_qty,
             "wrong_line": q_wrong_line, "three_way": q_three_way, "approval": q_approval}[kind](rng, p)
 
 
@@ -958,11 +976,13 @@ def generate_document(rng: random.Random, cluster_id: str) -> list[Decision]:
     lk = sample_look(rng, p)
     state = render_packet(rng, lk, p)
     base_meta = packet_meta(p, round(len(state) / 4))
-    kinds = [k for k in KINDS if not (k == "received_qty" and p.receipt_missing)]
+    # No receipt -> nothing to count; a duplicate invoice is never paid, so the discount question would be moot.
+    kinds = [k for k in KINDS if not (k == "received_qty" and p.receipt_missing)
+             and not (k == "discount" and p.faults["duplicate"])]
     chosen = rng.sample(kinds, rng.randint(6, min(10, len(kinds))))
     out = []
     for j, kind in enumerate(chosen):
-        qtype, question, opts, gold, extra = build_question(rng, kind, p)
+        qtype, question, opts, gold, extra = build_question(rng, kind, p, lk)
         out.append(Decision(id=f"{cluster_id}:{j}", type=qtype, state=state, question=question, options=list(opts),
                             gold=gold, family=FAMILY, source=SOURCE, licence=SYNTH_LICENCE, cluster_id=cluster_id,
                             edit_type=None, metadata={"kind": kind, **base_meta, **extra}))
