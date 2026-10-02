@@ -9,8 +9,11 @@ WorkflowEvals choice questions list up to 9 options, while Stage 0 trained on at
   these fits" when no listed category's keyword appears. Clusters swap the trigger phrase (one short
   edit) or swap the gold category out of the option list; every cluster has a "none of these fits"
   member (a keyword of an unlisted category, no keyword, or the matching option swapped out).
+  Categories that overlap by meaning (NESTED_GROUPS, e.g. NDA within contract) are listed together or
+  not at all.
 - `reframe_intents`: existing intent rows (Banking77, CLINC150 pool) re-asked with 7-10 candidate
-  intents: the original options plus label-space siblings that share words with the gold label.
+  intents from the same label space, none sharing a content word with the gold label or forming a
+  known near-duplicate pair with it (NEAR_DUPLICATE_LABELS).
 """
 
 from __future__ import annotations
@@ -242,6 +245,16 @@ SPECS: dict[str, Taxonomy] = {
     ),
 }
 
+# Categories that overlap by meaning (one nested in or causing the other). A row lists all of a group or
+# none of it, so "none of these fits" is never the keyword-rule answer while a listed category fits by meaning.
+NESTED_GROUPS: dict[str, tuple[frozenset[str], ...]] = {
+    "support_queue": (frozenset({"billing", "returns"}), frozenset({"sales", "partnerships"})),
+    "incident_category": (frozenset({"lost_device", "physical"}), frozenset({"outage", "ddos"}),
+                          frozenset({"insider", "data_leak", "access_violation"})),
+    "document_type": (frozenset({"contract", "nda"}), frozenset({"invoice", "receipt"})),
+    "expense_category": (frozenset({"travel", "lodging", "mileage"}), frozenset({"equipment", "office_supplies"})),
+}
+
 NAMES = ["Priya Nair", "Tomasz Kowal", "Amara Okafor", "Lena Fischer", "Diego Ramos", "Hana Sato",
          "Yusuf Demir", "Claire Dubois", "Sven Larsen", "Mei Lin", "Owen Price", "Fatima Zahra"]
 DEPTS = ["finance", "operations", "marketing", "HR", "engineering", "legal", "customer success", "facilities"]
@@ -285,11 +298,31 @@ def _slots(rng: random.Random) -> dict:
             "pages": rng.randint(2, 30), "amount": f"${rng.randint(8, 1900)}.{rng.randint(0, 99):02d}"}
 
 
+def _group_of(taxonomy: str, key: str) -> frozenset[str] | None:
+    return next((g for g in NESTED_GROUPS[taxonomy] if key in g), None)
+
+
+def pick_listed(rng: random.Random, taxonomy: str, n: int) -> list[Category]:
+    """n categories, each nested group all in or all out (reshuffled until whole groups add up to n)."""
+    cats = TAXONOMIES[taxonomy]
+    by_key = {c.key: c for c in cats}
+    units = [sorted(g) for g in NESTED_GROUPS[taxonomy]]
+    grouped = {k for g in units for k in g}
+    units += [[c.key] for c in cats if c.key not in grouped]
+    while True:
+        rng.shuffle(units)
+        chosen: list[str] = []
+        for u in units:
+            if len(chosen) + len(u) <= n:
+                chosen += u
+        if len(chosen) == n:
+            return [by_key[k] for k in chosen]
+
+
 def taxonomy_cluster(rng: random.Random, cid: str, taxonomy: str) -> list[Decision]:
     cats, spec = TAXONOMIES[taxonomy], SPECS[taxonomy]
     by_key = {c.key: c for c in cats}
-    n_options = rng.randint(7, 10)
-    listed = rng.sample(cats, n_options - 1)
+    listed = pick_listed(rng, taxonomy, rng.randint(6, 9))
     unlisted = [c for c in cats if c not in listed]
     options = [category_option(c, spec.subject) for c in listed] + [NONE_OPTION]
     rng.shuffle(options)
@@ -308,12 +341,16 @@ def taxonomy_cluster(rng: random.Random, cid: str, taxonomy: str) -> list[Decisi
         if rng.random() < 0.5:  # a keyword of a category that is not on the list
             rows.append((trig(rng.choice(unlisted)), options, "entity_swap"))
     else:
-        repl = category_option(rng.choice(unlisted), spec.subject)
-        none_rows = [(trig(rng.choice(unlisted)), options, "entity_swap"),
-                     (trig(None), options, "entity_swap"),
-                     # Same text; the matching category's option is replaced by an unlisted one.
-                     (base_trigger, [repl if o.key == base_cat.key else o for o in options], "policy_edit")]
-        rows.append(rng.choices(none_rows, (3, 2, 2))[0])
+        none_rows = [(trig(rng.choice(unlisted)), options, "entity_swap"), (trig(None), options, "entity_swap")]
+        weights = [3, 2]
+        loose = [c for c in unlisted if not _group_of(taxonomy, c.key)]
+        if not _group_of(taxonomy, base_cat.key) and loose:
+            # Same text; the matching category's option is replaced by an unlisted one. Only ungrouped
+            # categories are swapped, so the listing keeps every group whole.
+            repl = category_option(rng.choice(loose), spec.subject)
+            none_rows.append((base_trigger, [repl if o.key == base_cat.key else o for o in options], "policy_edit"))
+            weights.append(2)
+        rows.append(rng.choices(none_rows, weights)[0])
     if rng.random() < 0.5:
         rows.append((trig(second), options, "entity_swap"))
     question = rng.choice(spec.question)
@@ -345,13 +382,85 @@ def generate(n_clusters: int, seed: int) -> list[Decision]:
 # ---------------------------------------------------------------- intent rows, reframed
 
 _STOP = {"my", "a", "an", "the", "or", "to", "of", "is", "not", "and", "for", "in", "on", "me", "i", "you",
-         "do", "how", "what", "why", "can", "be"}
+         "do", "how", "what", "why", "can", "be", "by", "into", "after", "your", "are"}
+# Inflections the plural fold misses, mapped to one stem.
+_STEMS = {"charged": "charge", "receiving": "receive", "received": "receive", "supported": "support",
+          "getting": "get", "topping": "top", "currencies": "currency", "verification": "verify"}
+
+# Label pairs (gold, sibling) that are equally defensible answers yet share no content word, so the
+# word rule alone would let them through. Found by scanning the Banking77 and CLINC150 label names for
+# near-synonyms; pairs that share a word are already excluded by the word rule but are listed when a
+# review flagged them.
+NEAR_DUPLICATE_LABELS: frozenset[frozenset[str]] = frozenset(frozenset(p) for p in [
+    # flagged in review (Plan 5 Task 4, fix round 1)
+    ("receiving_money", "fiat_currency_support"), ("disposable_card_limits", "get_disposable_virtual_card"),
+    ("card_delivery_estimate", "card_arrival"), ("transfer_fee_charged", "card_payment_fee_charged"),
+    ("apr", "interest_rate"), ("verify_my_identity", "why_verify_identity"),
+    # Banking77
+    ("receiving_money", "transfer_into_account"), ("receiving_money", "transfer_not_received_by_recipient"),
+    ("receiving_money", "balance_not_updated_after_bank_transfer"),
+    ("fiat_currency_support", "supported_cards_and_currencies"), ("fiat_currency_support", "exchange_via_app"),
+    ("country_support", "supported_cards_and_currencies"), ("visa_or_mastercard", "supported_cards_and_currencies"),
+    ("passcode_forgotten", "change_pin"), ("passcode_forgotten", "pin_blocked"),
+    ("transaction_charged_twice", "extra_charge_on_statement"),
+    ("transaction_charged_twice", "card_payment_not_recognised"),
+    ("transaction_charged_twice", "direct_debit_payment_not_recognised"),
+    ("extra_charge_on_statement", "card_payment_fee_charged"), ("extra_charge_on_statement", "transfer_fee_charged"),
+    ("extra_charge_on_statement", "direct_debit_payment_not_recognised"),
+    ("extra_charge_on_statement", "cash_withdrawal_charge"), ("extra_charge_on_statement", "exchange_charge"),
+    ("exchange_charge", "card_payment_fee_charged"), ("exchange_charge", "transfer_fee_charged"),
+    ("atm_support", "card_swallowed"), ("atm_support", "declined_cash_withdrawal"),
+    ("atm_support", "wrong_amount_of_cash_received"), ("atm_support", "pending_cash_withdrawal"),
+    ("beneficiary_not_allowed", "declined_transfer"), ("beneficiary_not_allowed", "failed_transfer"),
+    ("top_up_failed", "declined_card_payment"), ("top_up_reverted", "reverted_card_payment"),
+    ("compromised_card", "lost_or_stolen_card"), ("compromised_card", "card_payment_not_recognised"),
+    ("lost_or_stolen_card", "card_swallowed"), ("getting_spare_card", "order_physical_card"),
+    ("get_physical_card", "order_physical_card"), ("card_arrival", "order_physical_card"),
+    ("unable_to_verify_identity", "verify_my_identity"), ("unable_to_verify_identity", "why_verify_identity"),
+    ("verify_source_of_funds", "why_verify_identity"), ("request_refund", "refund_not_showing_up"),
+    ("terminate_account", "edit_personal_details"),
+    # CLINC150
+    ("bill_due", "min_payment"), ("pay_bill", "min_payment"), ("bill_balance", "balance"),
+    ("card_declined", "account_blocked"), ("freeze_account", "report_fraud"), ("freeze_account", "account_blocked"),
+    ("report_lost_card", "freeze_account"), ("damaged_card", "new_card"), ("new_card", "replacement_card_duration"),
+    ("calendar", "meeting_schedule"), ("calendar", "schedule_meeting"), ("calendar_update", "schedule_meeting"),
+    ("direct_deposit", "payday"), ("income", "payday"), ("w2", "taxes"), ("transactions", "spending_history"),
+    ("recipe", "ingredients_list"), ("recipe", "meal_suggestion"), ("recipe", "cook_time"),
+    ("calories", "nutrition_info"), ("oil_change_when", "schedule_maintenance"),
+    ("oil_change_when", "last_maintenance"), ("mpg", "gas"), ("play_music", "update_playlist"),
+    ("play_music", "next_song"), ("what_song", "play_music"), ("spelling", "definition"),
+    ("translate", "change_language"), ("measurement_conversion", "calculator"), ("timer", "alarm"),
+    ("reminder", "todo_list"), ("reminder", "alarm"), ("time", "timezone"), ("directions", "distance"),
+    ("directions", "traffic"), ("exchange_rate", "international_fees"), ("tell_joke", "fun_fact"),
+    ("who_made_you", "who_do_you_work_for"), ("are_you_a_bot", "who_made_you"),
+    ("what_is_your_name", "change_ai_name"), ("change_user_name", "user_name"),
+    ("travel_alert", "travel_notification"), ("travel_alert", "international_visa"),
+    ("restaurant_reservation", "accept_reservations"), ("restaurant_reservation", "confirm_reservation"),
+    ("restaurant_suggestion", "meal_suggestion"), ("book_hotel", "travel_suggestion"),
+    ("book_flight", "travel_suggestion"), ("car_rental", "uber"), ("routing", "direct_deposit"),
+    ("transfer", "pay_bill"), ("credit_limit", "credit_limit_change"), ("credit_score", "improve_credit_score"),
+    ("redeem_rewards", "rewards_balance"), ("pto_request", "pto_request_status"), ("pto_balance", "pto_used"),
+    ("lost_luggage", "carry_on"), ("share_location", "current_location"), ("find_phone", "current_location"),
+    ("cancel", "no"), ("yes", "maybe"), ("goodbye", "thank_you"),
+])
+
+
+def _stem(w: str) -> str:
+    if w in _STEMS:
+        return _STEMS[w]
+    return w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
 
 
 def _label_words(key: str) -> set[str]:
-    """Content words of a label, with a plural "s" dropped (reservations ~ reservation)."""
-    words = {w for w in key.split("_") if w and w not in _STOP}
-    return {w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in words}
+    """Content words of a label: stopwords removed, plurals and a few inflections folded."""
+    return {_stem(w) for w in key.split("_") if w and w not in _STOP}
+
+
+def sibling_ok(gold: str, key: str) -> bool:
+    """A non-gold candidate may sit next to the gold: no shared content word, not a listed near-duplicate."""
+    if key == gold or NONE_KEY in (gold, key):
+        return key != gold
+    return not (_label_words(gold) & _label_words(key)) and frozenset((gold, key)) not in NEAR_DUPLICATE_LABELS
 
 
 def _refuse(r: Decision) -> str | None:
@@ -369,10 +478,11 @@ def _refuse(r: Decision) -> str | None:
 def reframe_intents(rows: list[Decision], n_options: range = range(7, 11), seed: int = 0) -> list[Decision]:
     """Each intent row re-asked with 7-10 candidate intents from its own source's label space.
 
-    The original options are kept; the extra candidates are labels of the same source, preferring those
-    that share a word with the gold label (e.g. card_arrival -> card_delivery_estimate). Rows whose
-    label space is too small to reach the drawn size get as many as the space holds, and are dropped
-    when that is under 7. Rows not in the pool split, or drawn from a test split, are refused.
+    Candidates come from the same source's label space and must pass `sibling_ok`: no content word
+    shared with the gold label and not a pair in NEAR_DUPLICATE_LABELS, so no candidate is an equally
+    defensible answer. The row's original options are kept when they pass the same rule. Rows whose
+    label space is too small to reach the drawn size get as many as it holds, and are dropped when that
+    is under 7. Rows not in the pool split, or drawn from a test split, are refused.
     """
     for r in rows:
         why = _refuse(r)
@@ -390,13 +500,12 @@ def reframe_intents(rows: list[Decision], n_options: range = range(7, 11), seed:
     for r in rows:
         space = spaces[r.source]
         target = rng.choice(sizes)
-        present = set(r.keys)
-        gold_words = _label_words(r.gold) if r.gold != NONE_KEY else set()
-        pool = sorted(k for k in space if k not in present)
+        kept = [o for o in r.options if o.key == r.gold or sibling_ok(r.gold, o.key)]
+        present = {o.key for o in kept}
+        pool = sorted(k for k in space if k not in present and sibling_ok(r.gold, k))
         rng.shuffle(pool)
-        pool.sort(key=lambda k: -len(_label_words(k) & gold_words))  # stable: ties stay shuffled
-        extra = pool[: max(0, target - len(r.options))]
-        options = list(r.options) + [space[k] for k in extra]
+        extra = pool[: max(0, target - len(kept))]
+        options = kept + [space[k] for k in extra]
         if len(options) < min(sizes):
             continue
         rng.shuffle(options)

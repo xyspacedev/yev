@@ -1,10 +1,11 @@
 import re
 from collections import Counter, defaultdict
+from pathlib import Path
 
 import pytest
 
 from yev.generators.common import EDIT_TYPES, MAX_EDIT_TOKENS, token_edit_size
-from yev.generators.many_options import NONE_KEY, TAXONOMIES, generate, reframe_intents
+from yev.generators.many_options import NONE_KEY, TAXONOMIES, generate, reframe_intents, sibling_ok
 from yev.schema import Decision, Option
 
 
@@ -79,20 +80,23 @@ def _intent_row(i: int, gold: str, labels: list[str], source="banking77", licenc
 
 LABELS = ["card_arrival", "card_delivery_estimate", "lost_or_stolen_card", "activate_my_card", "card_linking",
           "top_up_failed", "top_up_reverted", "pending_top_up", "exchange_rate", "age_limit", "change_pin",
-          "transfer_timing", "declined_transfer", "cash_withdrawal_charge"]
+          "transfer_timing", "declined_transfer", "cash_withdrawal_charge", "receiving_money",
+          "fiat_currency_support", "apr", "interest_rate", "passcode_forgotten", "terminate_account",
+          "edit_personal_details", "verify_my_identity", "why_verify_identity", "beneficiary_not_allowed"]
+CLINC = ["accept_reservations", "weather", "timer", "alarm", "spelling", "definition", "calories", "nutrition_info",
+         "tell_joke", "fun_fact", "uber", "car_rental", "flip_coin", "roll_dice"]
 
 
-def _pool(source="banking77", licence="cc-by-4.0"):
+def _pool(source="banking77", licence="cc-by-4.0", labels=LABELS):
     rows = []
-    for i, gold in enumerate(LABELS):
-        others = [lab for lab in LABELS if lab != gold][i % 5: i % 5 + 3]
+    for i, gold in enumerate(labels):
+        others = [lab for lab in labels if lab != gold][i % 5: i % 5 + 3]
         rows.append(_intent_row(i, gold, [gold] + others, source, licence))
     return rows
 
 
 def test_reframe_keeps_gold_and_licence():
-    rows = _pool() + [_intent_row(100 + i, "x_" + lab, ["x_" + lab, "x_other"], "clinc150", "cc-by-3.0")
-                      for i, lab in enumerate(["a", "b", "c", "d", "e", "f", "g", "h"])]
+    rows = _pool() + _pool("clinc150", "cc-by-3.0", CLINC)
     out = reframe_intents(rows, range(7, 11), seed=0)
     assert len(out) == len(rows)
     orig = {r.id: r for r in rows}
@@ -103,18 +107,55 @@ def test_reframe_keeps_gold_and_licence():
         assert d.gold == o.gold and d.licence == o.licence and d.source == o.source
         assert d.state == o.state and d.family == "many_options_intent" and d.split == "pool"
         assert 7 <= len(d.options) <= 10
-        # Siblings come from the same label space (source), and the original options are kept.
+        # Candidates come from the same label space (source); original options that pass the rule are kept.
         space = {opt.key for r in rows if r.source == o.source for opt in r.options}
-        assert set(d.keys) <= space and set(o.keys) <= set(d.keys)
+        assert set(d.keys) <= space
+        assert {k for k in o.keys if k == o.gold or sibling_ok(o.gold, k)} <= set(d.keys)
         sizes[len(d.options)] += 1
     assert len(sizes) >= 2
 
 
-def test_reframe_prefers_confusable_siblings():
-    out = reframe_intents(_pool(), range(7, 8), seed=1)
-    d = next(x for x in out if x.gold == "card_arrival")
-    card = {k for k in d.keys if "card" in k} - {"card_arrival"}
-    assert len(card) >= 3
+def _pool_rows():
+    from yev.schema import read_jsonl
+
+    paths = [Path("data/stage0-pool/banking77.jsonl"), Path("data/stage0-pool/clinc150.jsonl")]
+    if not all(p.exists() for p in paths):
+        pytest.skip("intent pool not built")
+    return [d for p in paths for d in read_jsonl(p)]
+
+
+def _content_words(key):
+    from yev.generators.many_options import _label_words
+
+    return _label_words(key)
+
+
+def test_reframe_siblings_share_no_content_word_with_gold():
+    out = reframe_intents(_pool() + _pool("clinc150", "cc-by-3.0", CLINC), range(7, 11), seed=4)
+    real = reframe_intents(_pool_rows()[::7], range(7, 11), seed=4)
+    for d in out + real:
+        if d.gold == NONE_KEY:
+            continue
+        for k in d.keys:
+            if k not in (d.gold, NONE_KEY):
+                assert not (_content_words(k) & _content_words(d.gold)), (d.id, d.gold, k)
+    # plural and inflection folding
+    assert _content_words("accept_reservations") & _content_words("cancel_reservation")
+    assert _content_words("transaction_charged_twice") & _content_words("exchange_charge")
+
+
+def test_reframe_never_pairs_near_duplicates():
+    from yev.generators.many_options import NEAR_DUPLICATE_LABELS
+
+    flagged = [("receiving_money", "fiat_currency_support"), ("disposable_card_limits", "get_disposable_virtual_card"),
+               ("card_delivery_estimate", "card_arrival"), ("transfer_fee_charged", "card_payment_fee_charged"),
+               ("apr", "interest_rate"), ("verify_my_identity", "why_verify_identity")]
+    assert all(frozenset(p) in NEAR_DUPLICATE_LABELS for p in flagged)
+    for d in reframe_intents(_pool() + _pool_rows(), range(7, 11), seed=5):
+        if d.gold == NONE_KEY:
+            continue
+        for k in d.keys:
+            assert frozenset((d.gold, k)) not in NEAR_DUPLICATE_LABELS, (d.id, d.gold, k)
 
 
 def test_reframe_never_uses_test_split_rows():
@@ -158,10 +199,16 @@ def test_every_cluster_has_a_none_member():
         assert any(r.gold == NONE_KEY for r in rows), cid
 
 
-def test_reframe_siblings_match_plurals():
-    labels = ["accept_reservations", "cancel_reservation", "restaurant_reservation", "time", "text", "user_name",
-              "how_busy", "calendar_update", "pin_change", "thank_you"]
-    rows = [_intent_row(i, lab, [lab, labels[(i + 1) % len(labels)], labels[(i + 2) % len(labels)]],
-                        "clinc150", "cc-by-3.0") for i, lab in enumerate(labels)]
-    d = next(x for x in reframe_intents(rows, range(7, 8), seed=0) if x.gold == "accept_reservations")
-    assert {"cancel_reservation", "restaurant_reservation"} <= set(d.keys)
+def test_nested_groups_listed_whole():
+    from yev.generators.many_options import NESTED_GROUPS
+
+    assert {"contract", "nda"} in [set(g) for g in NESTED_GROUPS["document_type"]]
+    assert {"travel", "lodging"} <= next(set(g) for g in NESTED_GROUPS["expense_category"] if "travel" in g)
+    assert {"lost_device", "physical"} in [set(g) for g in NESTED_GROUPS["incident_category"]]
+    for name, groups in NESTED_GROUPS.items():
+        keys = {c.key for c in TAXONOMIES[name]}
+        assert all(g <= keys for g in groups)
+    for d in generate(400, seed=12):
+        listed = set(d.keys)
+        for g in NESTED_GROUPS[d.metadata["taxonomy"]]:
+            assert g <= listed or not (g & listed), (d.id, sorted(g), sorted(listed))

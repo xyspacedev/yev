@@ -70,3 +70,13 @@ def test_scales_clusters_contrast():
 
 def test_scales_deterministic():
     assert [d.to_dict() for d in generate(20, 9)] == [d.to_dict() for d in generate(20, 9)]
+
+
+def test_every_risk_band_reachable():
+    reachable = {a * b for a in range(1, 6) for b in range(1, 6)}
+    rows = [d for d in generate(600, seed=11) if d.metadata["kind"] == "risk"]
+    assert any(d.edit_type == "policy_edit" for d in rows)
+    for d in rows:
+        cuts = d.metadata["cuts"]
+        levels = {str(sum(1 for c in cuts if v >= c)) for v in reachable}
+        assert levels == set(d.keys), (d.id, cuts)

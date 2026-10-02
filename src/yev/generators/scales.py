@@ -119,9 +119,13 @@ def risk_cluster(rng: random.Random, cid: str) -> list[Decision]:
     others = [(lk + a, im + b, cuts, "threshold") for a, b in moves if (a, b) != (dl, di)]
     rows += rng.sample(others, min(len(others), rng.randint(1, 2)))
     if rng.random() < POLICY_EDIT_RATE:
-        shifted = edge + 1 if lk * im >= edge else edge - 1
-        moved = sorted([c for c in cuts if c != edge] + [shifted])
-        if shifted not in cuts and shifted > 1 and level_of(moved, lk * im) != level_of(cuts, lk * im):
+        # Move the edge to the next reachable product above the base, or down onto the base itself, so
+        # every band still holds a score that can occur.
+        above = [p for p in RISK_PRODUCTS if p > edge]
+        shifted = (above[0] if above else None) if lk * im >= edge else lk * im
+        moved = sorted([c for c in cuts if c != edge] + [shifted]) if shifted else cuts
+        if (shifted and shifted not in cuts and shifted > 1
+                and level_of(moved, lk * im) != level_of(cuts, lk * im)):
             rows.append((lk, im, moved, "policy_edit"))
     question = rng.choice(("Which risk level does this entry fall into?", "What risk level should this get?"))
     members = [(render_risk(tpl, ref, area, hazard, prev, a, b), risk_options(c), level_of(c, a * b), e)
