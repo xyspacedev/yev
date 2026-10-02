@@ -1,0 +1,17 @@
+{
+  "name": "stage1",
+  "model_path": "/home/ubuntu/models/Qwen3.5-4B-Base",
+  "train_path": "/home/ubuntu/yev/data/mix/stage1/train.chat.jsonl",
+  "out_dir": "/home/ubuntu/runs/stage1",
+  "fraction": 1.0,
+  "lambda_pair": 0,
+  "lambda_perm": 0,
+  "twin_rate": 0,
+  "lambda_rps": 0.5,
+  "epochs": 1,
+  "n_max": 10,
+  "max_len_plain": 12288,
+  "max_len_examples": 12288,
+  "token_budget": 12288,
+  "sort_window": 200
+}

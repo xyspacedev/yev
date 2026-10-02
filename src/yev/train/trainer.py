@@ -33,6 +33,7 @@ class TrainConfig:
     warmup_ratio: float = 0.03
     weight_decay: float = 0.0
     token_budget: int = 12288
+    sort_window: int = 50  # units per length-sorted window in build_batches (length bucketing)
     grad_accum: int = 3
     max_len_plain: int = 2048
     max_len_examples: int = 4096
@@ -203,11 +204,12 @@ def train(cfg: TrainConfig, tokenizer=None, model=None) -> dict:
         pad_id = getattr(tokenizer, "eos_token_id", None) or 0
     # Each epoch reshuffles units with seed + epoch. max_steps, when set, overrides epochs (as in HF
     # Trainer): training runs exactly max_steps optimizer steps, adding epochs if the data runs out.
-    per_epoch = len(build_batches(enc, cfg.token_budget, cfg.seed, n_max=cfg.n_max))
+    per_epoch = len(build_batches(enc, cfg.token_budget, cfg.seed, window=cfg.sort_window, n_max=cfg.n_max))
     epochs = cfg.epochs
     if cfg.max_steps:
         epochs = max(1, math.ceil(cfg.max_steps * cfg.grad_accum / max(per_epoch, 1)))
-    batches = [b for ep in range(epochs) for b in build_batches(enc, cfg.token_budget, cfg.seed + ep, n_max=cfg.n_max)]
+    batches = [b for ep in range(epochs)
+               for b in build_batches(enc, cfg.token_budget, cfg.seed + ep, window=cfg.sort_window, n_max=cfg.n_max)]
     total_steps = math.ceil(len(batches) / cfg.grad_accum)
     if cfg.max_steps:
         total_steps = min(total_steps, cfg.max_steps)
