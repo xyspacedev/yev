@@ -10,6 +10,15 @@ def test_gen_rules_writes_valid_clusters(tmp_path):
     assert {r.source for r in rows} == {"synthetic_rules"}
 
 
+def test_gen_rules_stage1_families(tmp_path):
+    for family, source in [("returns_v2", "rules:returns_v2"), ("date_number_drills", "rules:date_number_drills")]:
+        out = tmp_path / f"{family}.jsonl"
+        assert cli.main(["gen-rules", "--family", family, "--clusters", "6", "--seed", "3", "--out", str(out)]) == 0
+        rows = list(read_jsonl(out))
+        assert {r.source for r in rows} == {source} and {r.family for r in rows} == {family}
+        assert len({r.cluster_id for r in rows}) >= 5
+
+
 def test_gen_rules_rejects_unknown_family(tmp_path, capsys):
     import pytest
 

@@ -45,7 +45,8 @@ def test_keep_valid_clusters_requires_two_distinct_golds():
 
 def test_edit_types_and_specs_are_licence_clean():
     assert "policy_edit" in EDIT_TYPES and "injection" in EDIT_TYPES and len(EDIT_TYPES) == 9
-    assert {s.name for s in SYNTHETIC_SPECS} == {"synthetic_rules", "synthetic_opus"}
+    assert {s.name for s in SYNTHETIC_SPECS} == {"synthetic_rules", "synthetic_opus",
+                                                  "rules:returns_v2", "rules:date_number_drills"}
     for s in SYNTHETIC_SPECS:
         licences.check(s.hf_id, s.licence, config=s.config, split=s.split, data_files=s.data_files)
 
