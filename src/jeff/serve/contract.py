@@ -183,12 +183,14 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
     max_tokens: int | None = None
     temperature: float | None = None
+    logprobs: bool | None = None
 
 
 class ChatChoice(BaseModel):
     index: int = 0
     message: ChatMessage
     finish_reason: str = "stop"
+    logprobs: dict | None = None  # only when requested: {"content": [{token, logprob, top_logprobs}]}
 
 
 class ChatUsage(BaseModel):

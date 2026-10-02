@@ -99,11 +99,17 @@ class Engine:
         probs = [readout.probs(z, len(r["letters"]), self.temperature(r["type"])) for r, z in zip(rows, logits)]
         return to_answers(questions, rows, probs), {"input_tokens": sum(lengths), "output_tokens": 0}
 
-    def chat(self, messages) -> str:
-        """The most probable letter among the options of the final user turn (our decision format)."""
+    def chat_probs(self, messages) -> dict[str, float]:
+        """Probability of each option letter of the final user turn (our decision format), at T = 1."""
         msgs = [_message(m) for m in messages]
         labels = _labels(msgs)
         rows = [{"messages": msgs}]
         self._checked_lengths(rows)
         z = self._logits(rows, max(LETTERS.index(L) for L in labels) + 1)[0]
-        return max(labels, key=lambda L: z[LETTERS.index(L)])
+        p = readout.probs([z[LETTERS.index(L)] for L in labels], len(labels))
+        return dict(zip(labels, p))
+
+    def chat(self, messages) -> str:
+        """The most probable letter among the options of the final user turn (our decision format)."""
+        p = self.chat_probs(messages)
+        return max(p, key=p.get)

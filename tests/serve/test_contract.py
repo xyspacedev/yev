@@ -202,7 +202,7 @@ def test_chat_request_minimal_and_tolerant():
 
 def test_chat_response_shape():
     resp = ChatResponse.build(model="yev-4b", content="B", prompt_tokens=10, completion_tokens=1)
-    out = resp.model_dump()
+    out = resp.model_dump(exclude_none=True)
     assert out["object"] == "chat.completion"
     assert out["choices"] == [{"index": 0, "message": {"role": "assistant", "content": "B"}, "finish_reason": "stop"}]
     assert out["usage"] == {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11}

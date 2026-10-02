@@ -461,6 +461,18 @@ def cmd_train(args) -> int:
     return 0
 
 
+def cmd_serve(args) -> int:
+    import uvicorn
+
+    from jeff.serve.app import create_app
+    from jeff.serve.engine import Engine
+
+    engine = Engine(args.model, args.base, args.calibration, max_len=args.max_len,
+                    batch_tokens=args.batch_tokens)
+    uvicorn.run(create_app(engine, model_name=args.model_name), host=args.host, port=args.port)
+    return 0
+
+
 def cmd_eval(args) -> int:
     from jeff.train import metrics, readout
     temps = json.loads(Path(args.calibration).read_text())["temperatures"] if args.calibration else {}
@@ -667,6 +679,16 @@ def make_parser() -> argparse.ArgumentParser:
         if name == "eval":
             p.add_argument("--calibration", help="calibration JSON from jeff calibrate (default T=1)")
         p.set_defaults(func=func)
+    p = sub.add_parser("serve", help="serve the model behind TypeSafe's POST /v1/systemone (needs the serve extra)")
+    p.add_argument("--model", required=True, help="LoRA adapter dir or full model dir")
+    p.add_argument("--base", help="base model path (required for adapters; tokenizer source)")
+    p.add_argument("--calibration", help="calibration JSON from jeff calibrate (default T=1)")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--max-len", type=int, default=16384, help="requests with a longer prompt are refused (422)")
+    p.add_argument("--batch-tokens", type=int, default=16384)
+    p.add_argument("--model-name", default="yev-4b", help="model name reported in responses and /v1/models")
+    p.set_defaults(func=cmd_serve)
     from jeff.bench import BENCHES
     bench = sub.add_parser("bench", help="external benchmarks: build rows, score a model, check overlap")
     bsub = bench.add_subparsers(dest="bench_command", required=True)
