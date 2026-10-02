@@ -1,7 +1,9 @@
-"""Fingerprints of every benchmark we report, so no training row shares a normalised 8-gram with any of them.
+"""Fingerprints of every benchmark we report, so no training row overlaps any of their items.
 
-Each benchmark keeps a set of 8-byte blake2b hashes of its states' 8-grams (same tokenisation as the
-DecideBench filter). `yev bench fingerprint` builds the file once; `yev filter --benchmarks` reads it.
+Each benchmark keeps its states' 8-gram hashes (8-byte blake2b, same tokenisation as the DecideBench
+filter), each with the indices of the items it came from. A row overlaps benchmark B when it shares
+ITEM_MIN_SHARED distinct 8-grams with one item of B (DecideBench: a single 8-gram, main spec section 2).
+`yev bench fingerprint` builds the file once; `yev filter --benchmarks` reads it.
 """
 
 from __future__ import annotations
@@ -22,7 +24,11 @@ HASH_NAME = "blake2b-8"
 STOP_MIN_BENCHMARKS = 2
 STOP_MIN_ITEMS = 20
 # Items shorter than NGRAM tokens are kept whole; from this length they also match inside longer states.
-SHORT_CONTAINED_MIN = 4
+SHORT_CONTAINED_MIN = 6
+# A row overlaps a benchmark when it shares this many distinct 8-grams with one single item of it ...
+ITEM_MIN_SHARED = 3
+# ... except for these benchmarks, where one shared 8-gram is enough (main spec section 2).
+STRICT_BENCHMARKS = frozenset({"decidebench"})
 
 # The 38 benchmarks that count in Decision Index 0.2.1, with the pinned source ids from the kit's
 # docs/suite.md (GitHub repos, Hub datasets, or the download host) plus Hub mirrors of the same data.
@@ -98,38 +104,44 @@ def _run_hashes(tokens: list[str], n: int) -> set[int]:
 
 @dataclass
 class BenchmarkFingerprints:
-    """8-gram hash sets per benchmark, in source order (the first overlapping one is reported)."""
+    """Per benchmark: 8-gram hash -> indices of the items holding it, in source order."""
 
-    hashes: dict[str, set[int]]
+    grams: dict[str, dict[int, list[int]]]
     items: dict[str, int]
+    thresholds: dict[str, int]
     meta: dict = field(default_factory=dict)
     # benchmark -> token count (1..NGRAM-1) -> hashes of the whole normalised text of its short items
     short: dict[str, dict[int, set[int]]] = field(default_factory=dict)
-    _first: dict[int, str] | None = field(default=None, init=False, repr=False, compare=False)
+    _index: dict | None = field(default=None, init=False, repr=False, compare=False)
 
     def names(self) -> list[str]:
-        return list(self.hashes)
+        return list(self.grams)
 
-    def first_owner(self) -> dict[int, str]:
-        if self._first is None:
-            first: dict[int, str] = {}
-            for name, hs in self.hashes.items():
-                for h in hs:
-                    first.setdefault(h, name)
-            self._first = first
-        return self._first
+    def index(self) -> dict[int, list[tuple[int, list[int]]]]:
+        """hash -> [(benchmark position, item indices)] across all benchmarks."""
+        if self._index is None:
+            idx: dict[int, list[tuple[int, list[int]]]] = {}
+            for b, owners in enumerate(self.grams.values()):
+                for h, its in owners.items():
+                    idx.setdefault(h, []).append((b, its))
+            self._index = idx
+        return self._index
 
     def save(self, path: Path | str) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "ngram": NGRAM,
-            "hash": HASH_NAME,
-            "meta": self.meta,
-            "benchmarks": {n: {"items": self.items[n], "hashes": sorted(hs),
-                               "short": {str(k): sorted(v) for k, v in sorted(self.short.get(n, {}).items())}}
-                           for n, hs in self.hashes.items()},
-        }
+        benchmarks = {}
+        for n, owners in self.grams.items():
+            hs = sorted(owners)
+            benchmarks[n] = {
+                "items": self.items[n],
+                "threshold": self.thresholds[n],
+                "hashes": hs,
+                # parallel to hashes: one item index, or a list when the gram is in several items
+                "owners": [owners[h][0] if len(owners[h]) == 1 else owners[h] for h in hs],
+                "short": {str(k): sorted(v) for k, v in sorted(self.short.get(n, {}).items())},
+            }
+        data = {"ngram": NGRAM, "hash": HASH_NAME, "meta": self.meta, "benchmarks": benchmarks}
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(data, separators=(",", ":")) + "\n", encoding="utf-8")
         os.replace(tmp, path)
@@ -137,65 +149,90 @@ class BenchmarkFingerprints:
     @classmethod
     def load(cls, path: Path | str) -> "BenchmarkFingerprints":
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-        if data.get("ngram") != NGRAM or data.get("hash") != HASH_NAME:
-            raise ValueError(f"{path}: expected {NGRAM}-gram {HASH_NAME} fingerprints, got "
-                             f"{data.get('ngram')}-gram {data.get('hash')}")
+        if data.get("ngram") != NGRAM or data.get("hash") != HASH_NAME or "owners" not in next(
+                iter(data.get("benchmarks", {}).values()), {"owners": []}):
+            raise ValueError(f"{path}: expected item-level {NGRAM}-gram {HASH_NAME} fingerprints; "
+                             "rebuild with yev bench fingerprint")
         b = data["benchmarks"]
-        return cls(hashes={n: set(v["hashes"]) for n, v in b.items()},
-                   items={n: v["items"] for n, v in b.items()}, meta=data.get("meta") or {},
-                   short={n: {int(k): set(h) for k, h in (v.get("short") or {}).items()} for n, v in b.items()})
+        return cls(
+            grams={n: {h: (o if isinstance(o, list) else [o]) for h, o in zip(v["hashes"], v["owners"])}
+                   for n, v in b.items()},
+            items={n: v["items"] for n, v in b.items()},
+            thresholds={n: v["threshold"] for n, v in b.items()},
+            meta=data.get("meta") or {},
+            short={n: {int(k): set(h) for k, h in (v.get("short") or {}).items()} for n, v in b.items()},
+        )
 
 
 def build_benchmark_fingerprints(sources: dict[str, list[str]], meta: dict | None = None) -> BenchmarkFingerprints:
-    """8-gram hashes per benchmark minus the boilerplate stoplist, plus whole-text hashes of short items."""
-    item_counts: dict[str, Counter] = {}
+    """Item-level 8-gram hashes per benchmark minus the boilerplate stoplist, plus short-item hashes."""
+    owners_by: dict[str, dict[int, list[int]]] = {}
     short: dict[str, dict[int, set[int]]] = {}
     items: dict[str, int] = {}
     for name, texts in sources.items():
-        c: Counter = Counter()
+        owners: dict[int, list[int]] = {}
         sh: dict[int, set[int]] = {}
-        for t in texts:
+        for i, t in enumerate(texts):
             tokens = normalize_tokens(t)
             if 0 < len(tokens) < NGRAM:
                 sh.setdefault(len(tokens), set()).add(gram_hash(tuple(tokens)))
-            c.update({gram_hash(g) for g in ngrams(tokens, NGRAM)})
-        item_counts[name], short[name], items[name] = c, sh, len(texts)
-    n_benchmarks: Counter = Counter(h for c in item_counts.values() for h in c)
-    hashes: dict[str, set[int]] = {}
+            for h in {gram_hash(g) for g in ngrams(tokens, NGRAM)}:
+                owners.setdefault(h, []).append(i)
+        owners_by[name], short[name], items[name] = owners, sh, len(texts)
+    n_benchmarks: Counter = Counter(h for owners in owners_by.values() for h in owners)
+    grams: dict[str, dict[int, list[int]]] = {}
     dropped: dict[str, int] = {}
-    for name, c in item_counts.items():
-        keep = {h for h, k in c.items() if k < STOP_MIN_ITEMS and n_benchmarks[h] < STOP_MIN_BENCHMARKS}
-        hashes[name], dropped[name] = keep, len(c) - len(keep)
+    for name, owners in owners_by.items():
+        grams[name] = {h: its for h, its in owners.items()
+                       if len(its) < STOP_MIN_ITEMS and n_benchmarks[h] < STOP_MIN_BENCHMARKS}
+        dropped[name] = len(owners) - len(grams[name])
+    thresholds = {n: 1 if n in STRICT_BENCHMARKS else ITEM_MIN_SHARED for n in sources}
     meta = dict(meta or {})
+    meta["item_min_shared"] = ITEM_MIN_SHARED
+    meta["thresholds"] = thresholds
     meta["stoplist"] = {"min_benchmarks": STOP_MIN_BENCHMARKS, "min_items": STOP_MIN_ITEMS, "dropped": dropped}
     meta["short_items"] = {"contained_min_tokens": SHORT_CONTAINED_MIN,
                            "counts": {n: sum(len(v) for v in sh.values()) for n, sh in short.items()}}
-    return BenchmarkFingerprints(hashes=hashes, items=items, meta=meta, short=short)
+    return BenchmarkFingerprints(grams=grams, items=items, thresholds=thresholds, meta=meta, short=short)
 
 
 def overlaps_any(d: Decision, bfp: BenchmarkFingerprints) -> str | None:
     """Name of the first benchmark (in source order) the row overlaps, else None.
 
-    Overlap is a shared normalised 8-gram (state, question and options), or a short benchmark item
-    (< 8 tokens) equal to the normalised state, or contained in it as a whole-token run when the item
-    has at least SHORT_CONTAINED_MIN tokens.
+    The row overlaps benchmark B when its text (state, question and options) shares at least
+    B's threshold of distinct 8-grams with one single item of B (ITEM_MIN_SHARED; 1 for DecideBench),
+    or when its normalised state equals a short item (< 8 tokens) of B, or contains one of at least
+    SHORT_CONTAINED_MIN tokens as a whole-token run.
     """
-    owner = bfp.first_owner()
-    hits = {owner[h] for h in text_hashes(decision_text(d)) if h in owner}
+    names = bfp.names()
+    thr = [bfp.thresholds[n] for n in names]
+    hits: set[int] = set()
+    counts: dict[int, Counter] = {}
+    idx = bfp.index()
+    for h in text_hashes(decision_text(d)):
+        for b, its in idx.get(h, ()):
+            if b in hits:
+                continue
+            if thr[b] <= 1:
+                hits.add(b)
+                continue
+            c = counts.setdefault(b, Counter())
+            for i in its:
+                c[i] += 1
+                if c[i] >= thr[b]:
+                    hits.add(b)
+                    break
     if any(bfp.short.values()):
         state = normalize_tokens(d.state)
         whole = gram_hash(tuple(state)) if 0 < len(state) < NGRAM else None
         runs = {n: _run_hashes(state, n) for n in range(SHORT_CONTAINED_MIN, NGRAM)}
-        for name, by_len in bfp.short.items():
+        for b, name in enumerate(names):
+            by_len = bfp.short.get(name, {})
             if whole is not None and whole in by_len.get(len(state), ()):
-                hits.add(name)
-                continue
-            if any(not runs[n].isdisjoint(hs) for n, hs in by_len.items() if n >= SHORT_CONTAINED_MIN):
-                hits.add(name)
-    if not hits:
-        return None
-    order = {n: i for i, n in enumerate(bfp.hashes)}
-    return min(hits, key=order.__getitem__)
+                hits.add(b)
+            elif any(not runs[n].isdisjoint(hs) for n, hs in by_len.items() if n >= SHORT_CONTAINED_MIN):
+                hits.add(b)
+    return names[min(hits)] if hits else None
 
 
 # --- Sources read by `yev bench fingerprint` ------------------------------------------------------

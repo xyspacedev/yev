@@ -94,13 +94,15 @@ def test_fingerprints_roundtrip(tmp_path):
     BFP.save(path)
     data = json.loads(path.read_text())
     assert data["ngram"] == 8
+    assert data["meta"]["item_min_shared"] == 3
     for name in ("b1", "b2", "b3"):
         hashes = data["benchmarks"][name]["hashes"]
         assert hashes == sorted(hashes) and all(isinstance(h, int) for h in hashes)
+        assert len(data["benchmarks"][name]["owners"]) == len(hashes)
         assert data["benchmarks"][name]["items"] == 1
     loaded = BenchmarkFingerprints.load(path)
     assert loaded.names() == ["b1", "b2", "b3"]
-    assert loaded.hashes == BFP.hashes and loaded.items == BFP.items
+    assert loaded.grams == BFP.grams and loaded.items == BFP.items and loaded.thresholds == BFP.thresholds
     assert overlaps_any(dec(1, B2), loaded) == "b2"
 
 
@@ -229,7 +231,7 @@ def test_short_item_exact_state_match_triggers():
     assert overlaps_any(dec(3, "How do I locate my parcel?"), fp) is None
 
 
-def test_short_item_contained_as_token_run_only_from_4_tokens():
+def test_short_item_contained_as_token_run_only_from_6_tokens():
     fp = build_benchmark_fingerprints({"intents": ["How do I locate my card?", "check my balance"]})
     assert overlaps_any(dec(1, "Customer wrote: how do I locate my card? Please help."), fp) == "intents"
     # 3-token item is not matched inside longer text
@@ -244,3 +246,38 @@ def test_short_items_roundtrip(tmp_path):
     loaded = BenchmarkFingerprints.load(tmp_path / "fp.json")
     assert loaded.short == fp.short
     assert overlaps_any(dec(1, "so: how do i locate my card"), loaded) == "intents"
+
+
+# --- Fix round 2: item-level matching -------------------------------------------------------------
+
+STOCK9 = "please let me know if you need anything else"  # 9 tokens: two 8-grams
+
+
+def test_one_stock_phrase_shared_with_an_item_does_not_drop():
+    fp = build_benchmark_fingerprints({"x": [f"{B1}. {STOCK9}"]})
+    assert overlaps_any(dec(1, f"Our own long document about pumps. {STOCK9}. More text."), fp) is None
+
+
+def test_three_distinct_ngrams_from_one_item_drop():
+    fp = build_benchmark_fingerprints({"x": [B1]})
+    toks = B1.split()
+    assert overlaps_any(dec(1, "Intro. " + " ".join(toks[:10]) + " outro."), fp) == "x"  # 3 grams
+    assert overlaps_any(dec(2, "Intro. " + " ".join(toks[:9]) + " outro."), fp) is None  # 2 grams
+
+
+def test_three_ngrams_spread_over_three_items_do_not_drop():
+    fp = build_benchmark_fingerprints({"x": [B1, B2, B3]})
+    row = " zz ".join(" ".join(t.split()[:8]) for t in (B1, B2, B3))
+    assert overlaps_any(dec(1, row), fp) is None
+
+
+def test_single_decidebench_ngram_still_drops():
+    fp = build_benchmark_fingerprints({"decidebench": [B1], "x": [B2]})
+    assert fp.thresholds == {"decidebench": 1, "x": 3}
+    assert overlaps_any(dec(1, "Intro. " + " ".join(B1.split()[:8]) + " outro."), fp) == "decidebench"
+
+
+def test_five_token_short_item_matches_exactly_but_not_contained():
+    fp = build_benchmark_fingerprints({"intents": ["Where is my new card?"]})
+    assert overlaps_any(dec(1, "Customer: where is my new card please"), fp) is None
+    assert overlaps_any(dec(2, "where is my new CARD"), fp) == "intents"

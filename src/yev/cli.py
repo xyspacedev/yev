@@ -648,7 +648,7 @@ def cmd_bench_fingerprint(args) -> int:
             "bench_dir": str(bench_dir), "hub": {} if args.no_hub else bm.hub_meta()}
     fp = bm.build_benchmark_fingerprints({**sources, **hub}, meta=meta)
     fp.save(args.out)
-    summary = {n: {"items": fp.items[n], "ngrams": len(fp.hashes[n]),
+    summary = {n: {"items": fp.items[n], "ngrams": len(fp.grams[n]), "threshold": fp.thresholds[n],
                    "stoplisted": fp.meta["stoplist"]["dropped"][n],
                    "short_items": fp.meta["short_items"]["counts"][n]} for n in fp.names()}
     print(json.dumps(summary, indent=2))
