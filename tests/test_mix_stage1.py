@@ -213,3 +213,89 @@ def test_state_key_is_the_unit_for_clusterless_documents():
     a = dec("p:1", state="Same contract.")
     b = dec("p:2", state="Same contract.", question="Other clause?")
     assert state_key(a) == state_key(b)
+
+
+# ---------------------------------------------------------------- fix round 1
+
+
+def test_block_calibration_share_whole_units_and_disjoint(tmp_path):
+    recipe = _docs(tmp_path)
+    for b in recipe["blocks"]:
+        b.update(calibration_share=0.03, calibration_min_rows=50)
+    nat = [dec(f"nat:{i}", "abc"[i % 3], source="pub") for i in range(40)]
+    write_jsonl(tmp_path / "nat.jsonl", nat)
+    recipe["calibration"] = {"files": [str(tmp_path / "nat.jsonl")], "rows": 20}
+    res = build_mix(recipe, NO_BENCH)
+    splits_by_doc = defaultdict(set)
+    for d in res.train + res.dev + res.calibration:
+        splits_by_doc[d.cluster_id or d.state].add(d.split)
+    assert all(len(s) == 1 for s in splits_by_doc.values())
+    from yev.mix import unit_key
+    tr, dv, cl = ({unit_key(d) for d in rows} for rows in (res.train, res.dev, res.calibration))
+    assert not (tr & dv) and not (tr & cl) and not (dv & cl)
+    for name, fam in (("inv", "invoice_ledger"), ("opus", "long_workflow"), ("pub", "public_long")):
+        n = res.report["blocks"][name]["calibration"]
+        assert n >= 50 and n == sum(d.family == fam for d in res.calibration)
+    assert sum(d.source == "pub" for d in res.calibration) == 20  # the recipe-level calibration still comes too
+    out = tmp_path / "mix"
+    write_mix(res, recipe, out)
+    assert len((out / "calibration.chat.jsonl").read_text().splitlines()) == len(res.calibration)
+    blocks = {b["name"]: b for b in _load_json("recipes/stage1.json")["blocks"]}
+    for fam in NEW_FAMILIES:
+        assert blocks[fam]["calibration_share"] == 0.03 and blocks[fam]["calibration_min_rows"] == 50
+    for b in _load_json("recipes/stage0.json")["blocks"]:
+        assert "calibration_share" not in blocks[b["name"]]
+
+
+def test_distractor_documents_forced_into_train(tmp_path):
+    from yev.generators.padding import doc_id
+
+    inv = [dec(f"invoices:0:{k}:{j}", "abc"[j % 3], family="invoice_ledger", state=f"Invoice document {k}.",
+               cluster=f"invoices:0:{k}") for k in range(40) for j in range(6)]
+    used = [f"Invoice document {k}." for k in range(0, 40, 2)]  # half the documents serve as filler
+    short = [dec(f"s:{i}", "abc"[i % 3], family="returns_v2") for i in range(50)]
+    pads = [dec(f"pad:{d.id}", d.gold, family="long_padding", state=f"{used[i % 20]}\n\n{d.state}",
+                cluster=f"pad:{d.id}", metadata={"orig_id": d.id, "distractor_ids": [doc_id(used[i % 20])]})
+            for i, d in enumerate(short)]
+    for name, rows in (("inv", inv), ("short", short), ("pad", pads)):
+        write_jsonl(tmp_path / f"{name}.jsonl", rows)
+    hold = {"dev_share": 0.05, "dev_min_rows": 60, "calibration_share": 0.03, "calibration_min_rows": 30}
+    res = build_mix(_recipe([
+        {"name": "inv", "files": [str(tmp_path / "inv.jsonl")], "rows": 10_000, **hold},
+        {"name": "short", "files": [str(tmp_path / "short.jsonl")], "rows": 10_000},
+        {"name": "pad", "files": [str(tmp_path / "pad.jsonl")], "rows": 10_000},
+    ]), NO_BENCH)
+    held_states = {d.state for d in res.dev + res.calibration if d.family == "invoice_ledger"}
+    assert held_states and not (held_states & set(used))
+    train_states = {d.state for d in res.train}
+    assert set(used) <= train_states
+    assert res.report["blocks"]["inv"]["forced_train"] == 20
+
+
+def test_numbered_scales_cannot_duplicate_stage0_severity(tmp_path):
+    sev = [dec(f"severity:{c}:0:{j}", "ab"[j % 2], family="severity", state=f"Incident {c} variant {j}.",
+               cluster=f"severity:{c}:0") for c in range(50) for j in range(2)]
+    scales = [dec(f"scales:{c}:{j}", "ab"[j % 2], family="numbered_scales", state=f"Incident {c} variant {j}.",
+                  cluster=f"scales:{c}", metadata={"kind": "severity", "orig_id": f"severity:x{c}:{j}"})
+              for c in range(100) for j in range(2)]
+    write_jsonl(tmp_path / "rules.jsonl", sev)
+    write_jsonl(tmp_path / "scales.jsonl", scales)
+    res = build_mix(_recipe([
+        {"name": "synthetic_rules", "files": [str(tmp_path / "rules.jsonl")], "rows": 60, "dev_share": 0.05},
+        {"name": "numbered_scales", "files": [str(tmp_path / "scales.jsonl")], "rows": 10_000, "dev_share": 0.05,
+         "exclude_from": ["synthetic_rules"]},
+    ]), NO_BENCH)
+    sev_states = {d.state for d in res.train + res.dev if d.family == "severity"}
+    sc_states = {d.state for d in res.train + res.dev if d.family == "numbered_scales"}
+    assert sev_states and sc_states and not (sev_states & sc_states)
+    blocks = {b["name"]: b for b in _load_json("recipes/stage1.json")["blocks"]}
+    assert blocks["numbered_scales"]["exclude_from"] == ["synthetic_rules"]
+
+
+def test_recipe_without_new_keys_keeps_stage0_shape(tmp_path):
+    rows = [dec(f"x:{i}", "abc"[i % 3]) for i in range(200)]
+    write_jsonl(tmp_path / "x.jsonl", rows)
+    res = build_mix(_recipe([{"name": "x", "files": [str(tmp_path / "x.jsonl")], "rows": 100, "dev_share": 0.1}]),
+                    NO_BENCH)
+    assert set(res.report["blocks"]["x"]) == {"available", "train", "dev", "shortfall"}
+    assert res.calibration == []

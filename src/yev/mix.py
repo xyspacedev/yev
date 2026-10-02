@@ -14,6 +14,7 @@ from pathlib import Path
 from yev.filters.contamination import Fingerprints, normalize_tokens
 from yev.filters.pipeline import assert_clean
 from yev.format import ExamplePool, render
+from yev.generators.padding import doc_id
 from yev.licences import is_allowed
 from yev.schema import Decision, read_jsonl, write_jsonl
 
@@ -93,10 +94,13 @@ def _units(decisions: list[Decision]) -> dict[str, list[Decision]]:
     return units
 
 
-def take_units(decisions: list[Decision], rows: int, rng: random.Random) -> list[Decision]:
+def take_units(decisions: list[Decision], rows: int, rng: random.Random, first: set[str] | None = None) -> list[Decision]:
+    """Whole units in shuffled order until `rows` is reached; units in `first` are taken before the rest."""
     units = _units(decisions)
     keys = sorted(units)
     rng.shuffle(keys)
+    if first:
+        keys = [k for k in keys if k in first] + [k for k in keys if k not in first]
     out: list[Decision] = []
     for k in keys:
         if len(out) >= rows:
@@ -130,13 +134,23 @@ def build_mix(recipe: dict, fingerprints: Fingerprints) -> MixResult:
     report: dict = {"name": recipe.get("name"), "blocks": {}}
     train: list[Decision] = []
     dev: list[Decision] = []
+    block_cal: list[Decision] = []
+    pools = {block["name"]: load(block["files"]) for block in recipe["blocks"]}
+    # Documents used as padding filler (padded rows' metadata.distractor_ids = padding.doc_id(state)) go to
+    # train only: they are never held out, and they are taken before other units.
+    distractors = {i for rows in pools.values() for d in rows for i in (d.metadata or {}).get("distractor_ids", [])}
+
+    def is_distractor(d: Decision) -> bool:
+        return bool(distractors) and doc_id(d.state) in distractors
+
     done: dict[str, tuple[list[Decision], list[Decision]]] = {}
     for block in recipe["blocks"]:
         rng = random.Random(f"{seed}:{block['name']}")
-        pool = load(block["files"])
+        pool = pools[block["name"]]
         available = len(pool)
         # exclude_from: drop every row tied to a row an earlier block took (no utterance twice).
-        # split_follows: drop rows tied to an earlier block's dev rows; rows tied to its train rows stay out of dev.
+        # split_follows: drop rows tied to an earlier block's dev/calibration rows; rows tied to its train
+        # rows are never held out.
         banned: set[str] = set()
         for name in _block_refs(block, "exclude_from", done):
             banned.update(k for d in done[name][0] + done[name][1] for k in _links(d))
@@ -150,23 +164,40 @@ def build_mix(recipe: dict, fingerprints: Fingerprints) -> MixResult:
             bad_units = {unit_key(d) for d in pool if _links(d) & banned}
             kept = [d for d in pool if unit_key(d) not in bad_units]
             excluded, pool = len(pool) - len(kept), kept
+        forced = {unit_key(d) for d in pool if is_distractor(d)}
+
+        def eligible(d: Decision) -> bool:
+            return not (_links(d) & train_links) and unit_key(d) not in forced
+
         held: list[Decision] = []
         share = block.get("dev_share", 0.0)
         if share > 0:
-            chosen = _stratified_holdout(pool, share, rng, block.get("dev_min_rows", 0),
-                                         eligible=lambda d: not (_links(d) & train_links))
+            chosen = _stratified_holdout(pool, share, rng, block.get("dev_min_rows", 0), eligible=eligible)
             held = [replace(d, split="dev") for d in pool if holdout_key(d) in chosen]
             pool = [d for d in pool if holdout_key(d) not in chosen]
-        taken = [replace(d, split="train") for d in take_units(pool, block["rows"], rng)]
+        cal_held: list[Decision] = []
+        cal_share = block.get("calibration_share", 0.0)
+        if cal_share > 0:
+            cal_rng = random.Random(f"{seed}:{block['name']}:calibration")
+            chosen = _stratified_holdout(pool, cal_share, cal_rng, block.get("calibration_min_rows", 0),
+                                         eligible=eligible)
+            cal_held = [replace(d, split="calibration") for d in pool if holdout_key(d) in chosen]
+            pool = [d for d in pool if holdout_key(d) not in chosen]
+        taken = [replace(d, split="train") for d in take_units(pool, block["rows"], rng, first=forced)]
         train.extend(taken)
         dev.extend(held)
-        done[block["name"]] = (taken, held)
+        block_cal.extend(cal_held)
+        done[block["name"]] = (taken, held + cal_held)
         info = {
             "available": available, "train": len(taken), "dev": len(held),
             "shortfall": max(0, block["rows"] - len(taken)),
         }
+        if cal_share > 0:
+            info["calibration"] = len(cal_held)
         if "exclude_from" in block or "split_follows" in block:
             info["excluded"] = excluded
+        if distractors:
+            info["forced_train"] = len(forced)
         if block.get("report_gold"):
             info["train_gold"] = dict(Counter(d.gold for d in taken))
             info["dev_gold"] = dict(Counter(d.gold for d in held))
@@ -177,15 +208,19 @@ def build_mix(recipe: dict, fingerprints: Fingerprints) -> MixResult:
     overlap = {unit_key(d) for d in train} & {unit_key(d) for d in dev}
     if overlap:
         raise ValueError(f"{len(overlap)} units appear in both train and dev")
+    cal_units = {unit_key(d) for d in block_cal}
+    overlap = cal_units & {unit_key(d) for d in train + dev}
+    if overlap:
+        raise ValueError(f"{len(overlap)} calibration units also appear in train or dev")
 
-    calibration: list[Decision] = []
+    calibration: list[Decision] = list(block_cal)
     if "calibration" in recipe:
         cal = recipe["calibration"]
-        used = {state_key(d) for d in train + dev}
+        used = {state_key(d) for d in train + dev + block_cal}
         units = _units(load(cal["files"]))
         clean = [d for members in units.values() if not any(state_key(x) in used for x in members) for d in members]
         rng = random.Random(f"{seed}:calibration")
-        calibration = [replace(d, split="calibration") for d in take_units(clean, cal["rows"], rng)]
+        calibration += [replace(d, split="calibration") for d in take_units(clean, cal["rows"], rng)]
 
     bad = sorted({d.licence for d in train + calibration if not is_allowed(d.licence)})
     if bad:

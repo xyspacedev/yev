@@ -135,7 +135,9 @@
       "rows": 3000,
       "dev_share": 0.05,
       "dev_min_rows": 100,
-      "report_gold": true
+      "report_gold": true,
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50
     },
     {
       "name": "date_number_drills",
@@ -144,7 +146,9 @@
       ],
       "rows": 3000,
       "dev_share": 0.05,
-      "dev_min_rows": 100
+      "dev_min_rows": 100,
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50
     },
     {
       "name": "invoice_ledger",
@@ -153,7 +157,9 @@
       ],
       "rows": 3000,
       "dev_share": 0.05,
-      "dev_min_rows": 100
+      "dev_min_rows": 100,
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50
     },
     {
       "name": "numbered_scales",
@@ -163,7 +169,9 @@
       "rows": 2000,
       "dev_share": 0.05,
       "dev_min_rows": 100,
-      "split_follows": [
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50,
+      "exclude_from": [
         "synthetic_rules"
       ]
     },
@@ -175,7 +183,9 @@
       "rows": 1500,
       "dev_share": 0.05,
       "dev_min_rows": 100,
-      "report_gold": true
+      "report_gold": true,
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50
     },
     {
       "name": "many_options_intent",
@@ -187,7 +197,9 @@
       "dev_min_rows": 100,
       "exclude_from": [
         "intent"
-      ]
+      ],
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50
     },
     {
       "name": "long_workflow",
@@ -196,7 +208,9 @@
       ],
       "rows": 4000,
       "dev_share": 0.05,
-      "dev_min_rows": 100
+      "dev_min_rows": 100,
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50
     },
     {
       "name": "long_padding",
@@ -227,7 +241,9 @@
         "numbered_scales",
         "many_options",
         "many_options_intent"
-      ]
+      ],
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50
     },
     {
       "name": "public_long",
@@ -236,7 +252,9 @@
       ],
       "rows": 3000,
       "dev_share": 0.05,
-      "dev_min_rows": 100
+      "dev_min_rows": 100,
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50
     }
   ],
   "dev_files": [
