@@ -21,6 +21,30 @@ def letter_pattern(n_options: int) -> re.Pattern:
     return re.compile(rf"\b([A-{last}])\b")
 
 
+_PRONOUN_I = re.compile(r"\bI(?=['\u2019]|\s+[a-z])")
+
+
+def parse_letter(text: str, n_options: int) -> str | None:
+    """The answer letter, or None.
+
+    Items with up to 6 options keep the original rule (first standalone A-F, case-insensitive). Wider items, whose
+    range reaches I, read: a bare letter ("B", "(b)", "J."), else "Answer: X" / "answer is X", else the one
+    standalone capital letter in range, ignoring the pronoun I ("I think B"); several candidates mean no answer."""
+    text = str(text)
+    if n_options <= CLUSTER_LETTERS:
+        m = letter_pattern(n_options).search(text.upper())
+        return m.group(1) if m else None
+    last = LETTERS[min(n_options, len(LETTERS)) - 1]
+    bare = re.fullmatch(rf"\s*\(?([A-{last}a-{last.lower()}])\)?[.)]?\s*", text)
+    if bare:
+        return bare.group(1).upper()
+    said = re.search(rf"\banswer\s*(?:is)?\s*[:=]?\s*\(?([A-{last}a-{last.lower()}])\b", text, re.I)
+    if said:
+        return said.group(1).upper()
+    candidates = set(re.findall(rf"\b([A-{last}])\b", _PRONOUN_I.sub(" ", text)))
+    return candidates.pop() if len(candidates) == 1 else None
+
+
 def prepare_sheets(
     decisions: list[Decision], n_sheets: int = 3, part_size: int = 100, seed: int = 0
 ) -> tuple[list[tuple[str, list[dict]]], dict]:
@@ -95,8 +119,8 @@ def score_answers(decisions: list[Decision], key: dict, answers: list[dict],
         if item_id in seen:
             stats["duplicate_answer"] += 1
             continue
-        m = letter_pattern(len(entry["letters"])).search(str(a.get("letter", "")).upper())
-        chosen = entry["letters"].get(m.group(1)) if m else None
+        letter = parse_letter(a.get("letter", ""), len(entry["letters"]))
+        chosen = entry["letters"].get(letter) if letter else None
         if chosen is None:
             stats["bad_letter"] += 1
             continue

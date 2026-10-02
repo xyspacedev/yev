@@ -29,7 +29,7 @@ from yev.generators import actions, drills, invoices, many_options, returns, ret
 from yev.generators.common import EDIT_TYPES
 from yev.generators.llm.attrib import prepare_pairs, render_attrib_prompt, score_attribution
 from yev.generators.llm import documents
-from yev.generators.llm.check import LETTERS, letter_pattern, prepare_sheets, render_checker_prompt, score_answers
+from yev.generators.llm.check import LETTERS, parse_letter, prepare_sheets, render_checker_prompt, score_answers
 from yev.generators.llm.ingest import ingest_file
 from yev.generators.llm.plan import plan_batches, render_writer_prompt
 from yev.generators.specs import SYNTHETIC_SPECS
@@ -266,8 +266,8 @@ def _coverage(key: dict, answers: list[dict], field: str) -> tuple[int, int]:
         if item not in expected:
             continue
         if field == "item_id":
-            m = letter_pattern(len(key[item].get("letters", {}))).search(str(a.get("letter", "")).upper())
-            valid = bool(m) and m.group(1) in key[item].get("letters", {})
+            letters = key[item].get("letters", {})
+            valid = parse_letter(a.get("letter", ""), len(letters)) in letters
         else:
             valid = str(a.get("edit_type", "")).strip().lower() in EDIT_TYPES
         if valid:
@@ -353,10 +353,17 @@ def cmd_synth_doc_ingest(args) -> int:
     if not _is_doc_run(run):
         print(f"error: {run} has no document batches; run synth doc-plan first")
         return 2
+    try:
+        count, method = documents.load_doc_counter(allow_heuristic=args.allow_heuristic)
+    except padding.TokenizerUnavailable as e:
+        print(f"error: {e}")
+        print("doc-ingest measures documents with the real Qwen3.5 tokenizer (run with --extra train and the "
+              "tokenizer in ~/.cache/huggingface); pass --allow-heuristic to estimate with len/4 x "
+              f"{padding.HEURISTIC_FACTOR} instead.")
+        return 2
     _clear(run, "ingested.jsonl", "checked.jsonl", "final", "check", "attrib", "private",
            "reports/check.json", "reports/pilot.json")
     stats, dropped = Counter(), []
-    count, method = documents.load_doc_counter()
     rows = documents.ingest_docs(run, count=count, stats=stats, dropped=dropped, method=method)
     write_jsonl(run / "ingested.jsonl", rows)
     _write_json(run / "reports" / "ingest.json", {**dict(stats), "token_count": method})
@@ -442,8 +449,8 @@ def cmd_synth_check_score(args) -> int:
 def _doc_check_score(run: Path, key: dict, answers: list[dict], bad: int, n: int, m: int) -> int:
     """Documents skip attribution (Plan Ruling 2): check-score writes the final rows and the pilot report."""
     ingested = list(read_jsonl(run / "ingested.jsonl"))
-    survivors, _ = score_answers(ingested, key, answers, cluster_filter=None)
-    kept, stats = documents.score_doc_answers(ingested, key, answers)
+    survivors: list = []
+    kept, stats = documents.score_doc_answers(ingested, key, answers, survivors_out=survivors)
     stats["bad_answer_line"] = bad
     stats["answered"], stats["expected"] = n, m
     if n < m:
@@ -837,6 +844,10 @@ def make_parser() -> argparse.ArgumentParser:
                        ("doc-plan", cmd_synth_doc_plan), ("doc-ingest", cmd_synth_doc_ingest)]:
         p = ssub.add_parser(name)
         p.add_argument("--dir", required=True)
+        if name == "doc-ingest":
+            p.add_argument("--allow-heuristic", action="store_true",
+                           help=f"if the real tokenizer is unavailable, estimate tokens as len/4 x "
+                                f"{padding.HEURISTIC_FACTOR} instead of refusing")
         if name == "doc-plan":
             p.add_argument("--docs", type=int, required=True)
             p.add_argument("--per-batch", type=int, default=2)

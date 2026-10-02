@@ -163,13 +163,33 @@ def test_ingest_drops_doc_with_mostly_bad_questions(tmp_path):
     assert stats["doc_too_many_bad_questions"] == 1
 
 
-def test_heuristic_counter_when_tokenizer_missing(monkeypatch, caplog):
-    def boom(*a, **k):
-        raise documents.padding.TokenizerUnavailable("no tokenizer")
-    monkeypatch.setattr(documents.padding, "load_token_counter", boom)
-    count, method = documents.load_doc_counter()
-    assert method == "heuristic" and count("x" * 4000) == 1501
-    assert "heuristic" in caplog.text
+def test_counter_refuses_without_tokenizer_unless_allowed(monkeypatch):
+    def missing(*a, allow_heuristic=False, **k):
+        if not allow_heuristic:
+            raise documents.padding.TokenizerUnavailable("no tokenizer")
+        return documents.padding.heuristic_tokens
+    monkeypatch.setattr(documents.padding, "load_token_counter", missing)
+    with pytest.raises(documents.padding.TokenizerUnavailable):
+        documents.load_doc_counter()
+    count, method = documents.load_doc_counter(allow_heuristic=True)
+    assert method == "heuristic" and count("x" * 4000) == documents.padding.heuristic_tokens("x" * 4000) == 2001
+
+
+def test_cli_doc_ingest_refuses_without_tokenizer(tmp_path, monkeypatch, capsys):
+    def missing(*a, allow_heuristic=False, **k):
+        if not allow_heuristic:
+            raise documents.padding.TokenizerUnavailable("tokenizer Qwen/Qwen3.5-4B-Base not found")
+        return documents.padding.heuristic_tokens
+    monkeypatch.setattr(documents.padding, "load_token_counter", missing)
+    run = tmp_path / "run"
+    assert cli.main(["synth", "doc-plan", "--dir", str(run), "--docs", "1", "--seed", "0"]) == 0
+    (run / "written" / "doc-batch-000.jsonl").write_text(json.dumps({**doc("d0"), "state": "x" * 8000}) + "\n")
+    assert cli.main(["synth", "doc-ingest", "--dir", str(run)]) == 2
+    out = capsys.readouterr().out
+    assert "tokenizer" in out and "--allow-heuristic" in out and not (run / "ingested.jsonl").exists()
+    assert cli.main(["synth", "doc-ingest", "--dir", str(run), "--allow-heuristic"]) == 0
+    ingest = json.loads((run / "reports" / "ingest.json").read_text())
+    assert ingest["token_count"] == "heuristic" and ingest["docs_kept"] == 1  # 8000 chars -> 4001 tokens
 
 
 def _doc_decisions(n_docs=2, n_q=10):
@@ -280,7 +300,7 @@ def test_checker_prompt_for_documents():
 # --- CLI: doc-plan -> doc-ingest -> check-prepare -> check-score ---------------------------------
 
 def test_cli_doc_pipeline_end_to_end(tmp_path, monkeypatch):
-    monkeypatch.setattr(documents, "load_doc_counter", lambda: (count_words, "test"))
+    monkeypatch.setattr(documents, "load_doc_counter", lambda allow_heuristic=False: (count_words, "test"))
     run = tmp_path / "run"
     assert cli.main(["synth", "doc-plan", "--dir", str(run), "--docs", "3", "--per-batch", "2", "--seed", "0"]) == 0
     specs = sorted((run / "batches").glob("*.json"))
@@ -328,3 +348,66 @@ def test_cli_doc_pipeline_end_to_end(tmp_path, monkeypatch):
     assert pilot["question_survival_by_type"]["score"]["ingested"] == 4
     assert cli.main(["synth", "attrib-prepare", "--dir", str(run)]) == 2
     assert cli.main(["synth", "ingest", "--dir", str(run)]) == 2
+
+
+# --- fix round 1 ---------------------------------------------------------------------------------
+
+def test_doc_dropped_when_survivors_below_70pct_of_written(tmp_path):
+    from collections import Counter
+    qs = [choice_q(f"q{i}") for i in range(7)] + [choice_q(f"bad{i}", n=2) for i in range(3)]  # 10 written
+    run, _ = write_run(tmp_path, [[doc("x", questions=qs)]])
+    rows = ingest_docs(run, count=count_words, stats=Counter())
+    assert len(rows) == 7 and all(d.metadata["questions_written"] == 10 for d in rows)
+    parts, key = prepare_sheets(rows, n_sheets=3, part_size=4, seed=0)
+    lose = {rows[0].id, rows[1].id}  # 5 of 7 ingested survive: 71% of ingested, but 50% of written
+    kept, stats = score_doc_answers(rows, key, _answers(parts, key,
+                                                        lambda d, s: "escalate" if d in lose else "refund"))
+    assert kept == [] and stats["docs_dropped_below_70pct"] == 1
+    # without the metadata (older rows), the ingested count is the denominator
+    for d in rows:
+        d.metadata = None
+    assert len(keep_docs(rows[2:], rows)) == 5
+
+
+def test_writer_prompt_requires_rubric_in_document():
+    for b in plan_doc_batches(10, per_batch=2, seed=0):
+        p = doc_writer_prompt(b, "/tmp/o.jsonl")
+        assert "rubric stated inside the document" in p
+        assert "SEV" in p and "risk matrix" in p
+        line = next(l for l in p.splitlines() if l.startswith('{"doc_id"'))
+        example = json.loads(line)
+        assert {q["name"] for q in example["questions"]} <= set(DOC_KINDS[b["doc_kind"]][1])
+        assert {q["type"] for q in example["questions"]} == {"choice", "score"}
+
+
+def test_letter_parsing_wide_items():
+    from yev.generators.llm.check import parse_letter
+    for text, want in [("I think B", "B"), ("B", "B"), (" b ", "B"), ("(J)", "J"), ("Answer: H", "H"),
+                       ("answer is g", "G"), ("I'd pick C", "C"), ("The answer: I", "I"), ("I", "I"),
+                       ("A or B", None), ("I think B, maybe C", None), ("", None), ("K", None),
+                       ("I choose", None)]:
+        assert parse_letter(text, 10) == want, text
+    assert parse_letter("H", 8) == "H" and parse_letter("J", 8) is None
+
+
+def test_letter_parsing_six_options_unchanged():
+    import re
+    from yev.generators.llm.check import parse_letter
+    old = re.compile(r"\b([A-F])\b")
+    for text in ["I think B", "B", " b ", "A or B", "G", "Answer: C", "(D)", "I", "a, then f", "K", ""]:
+        for n in (2, 3, 4, 5, 6):
+            m = old.search(text.upper())
+            assert parse_letter(text, n) == (m.group(1) if m else None), (text, n)
+
+
+def test_score_answers_reads_i_think_b_on_ten_options():
+    opts = [Option(f"k{i}", f"Option {i}.") for i in range(10)]
+    ds = make_cluster(cluster_id="doc:z", family=FAMILY, source="synthetic_opus", qtype="choice", question="q",
+                      members=[("doc", opts, "k3", None)])
+    parts, key = prepare_sheets(ds, n_sheets=3, seed=0)
+    answers = []
+    for i, v in key.items():
+        letter = next(l for l, k in v["letters"].items() if k == "k3")
+        answers.append({"item_id": i, "letter": f"I think {letter}"})
+    kept, stats = score_answers(ds, key, answers, cluster_filter=None)
+    assert len(kept) == 1 and stats["bad_letter"] == 0

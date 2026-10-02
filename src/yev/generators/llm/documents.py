@@ -35,7 +35,6 @@ MIN_CHOICE, MAX_CHOICE = 3, len(LETTERS)
 MIN_LEVELS, MAX_LEVELS = 3, len(LETTERS)
 KEEP_DOC_SHARE = 0.7
 INJECTION_SHARE = 0.05
-HEURISTIC_FACTOR = 1.5
 CHECK_PART_SIZE = 10  # items per checker part; each item carries a whole document
 WORDS_PER_TOKEN = 0.7
 log = logging.getLogger(__name__)
@@ -76,26 +75,36 @@ def is_doc_spec(spec: dict) -> bool:
 
 # --- writer prompt --------------------------------------------------------------------------------
 
-EXAMPLE = {
-    "doc_id": "d1",
-    "injection": False,
-    "state": "The whole document text, with real line breaks written as \\n.",
-    "questions": [
-        {"name": "next_action", "type": "choice", "question": "What should the agent do next?",
-         "options": [{"key": "issue_refund", "description": "Refund the order now."},
-                     {"key": "ask_for_photo", "description": "Ask the customer for a photo of the damage."},
-                     {"key": "escalate_to_billing", "description": "Hand the case to the billing team."},
-                     {"key": "insufficient_information", "description": "The thread does not say enough to decide."}],
-         "gold": "ask_for_photo", "rationale": "One or two sentences pointing to where the document settles it."},
-        {"name": "customer_sentiment", "type": "score", "question": "How does the customer feel at the end?",
-         "options": [{"key": "0", "description": "Furious: threatens to leave or complain publicly."},
-                     {"key": "1", "description": "Annoyed but still engaging."},
-                     {"key": "2", "description": "Neutral, matter-of-fact."},
-                     {"key": "3", "description": "Satisfied with the outcome."},
-                     {"key": "4", "description": "Delighted, goes out of their way to thank the team."}],
-         "gold": "1", "rationale": "The last message."},
-    ],
-}
+SCORE_EXAMPLE_LEVELS = [
+    "One sentence restating level 0 of the rubric quoted in the document.",
+    "One sentence restating level 1 of that rubric.",
+    "One sentence restating level 2 of that rubric.",
+    "One sentence restating level 3 of that rubric.",
+]
+
+
+def example_doc(kind: str) -> dict:
+    """A one-line placeholder document whose question names come from this kind's topics."""
+    topics = DOC_KINDS[kind][1]
+    choice = next(t for t in topics if DOC_TOPICS[t][0] == "choice")
+    score = next(t for t in topics if DOC_TOPICS[t][0] == "score")
+    return {
+        "doc_id": "d1",
+        "injection": False,
+        "state": "The whole document text, with real line breaks written as \\n.",
+        "questions": [
+            {"name": choice, "type": "choice", "question": "A question about this case.",
+             "options": [{"key": "first_option", "description": "One sentence."},
+                         {"key": "second_option", "description": "One sentence."},
+                         {"key": "third_option", "description": "One sentence."},
+                         {"key": "insufficient_information", "description": "The document does not settle it."}],
+             "gold": "second_option", "rationale": "One or two sentences pointing to where the document settles it."},
+            {"name": score, "type": "score",
+             "question": "Using the rating scale quoted in the document, which level applies?",
+             "options": [{"key": str(i), "description": d} for i, d in enumerate(SCORE_EXAMPLE_LEVELS)],
+             "gold": "2", "rationale": "The rubric in section 2 and the impact figures in the 14:05 update."},
+        ],
+    }
 
 
 def doc_writer_prompt(batch: dict, output_path: str = "<output file>") -> str:
@@ -140,6 +149,10 @@ Write {q} questions per document. Use these question topics; a question's `name`
   "insufficient information" option, and make it the gold when the document really does not settle it.
 - A score question uses numbered levels: option keys "0", "1", ... "n-1" (3 to 10 levels), ordered from lowest to
   highest, each with a one-sentence description of that level.
+- Every score question (severity, risk, priority, sentiment or similar) must use a
+  rubric stated inside the document itself: a quoted SEV table, a risk matrix, a priority definition or a policy
+  excerpt that defines each level, so the level can be decided from the text alone. The score options restate that rubric's levels.
+  Write the rubric into the document before writing the question; never rely on a scale the reader must guess.
 - Choice option keys are short snake_case; each description is one sentence.
 - Every `gold` is one of the question's option keys. Spread golds across options; do not favour the first one.
 - `rationale` says in one or two sentences where in the document the answer is settled. It is never shown to the
@@ -166,7 +179,7 @@ Write {q} questions per document. Use these question topics; a question's `name`
 Write exactly {n} lines to `{output_path}` using the Write tool: one JSON object per line (one document per
 line), no prose, no code fences. Each object has this shape (values are placeholders, shortened here):
 
-{json.dumps(EXAMPLE)}
+{json.dumps(example_doc(batch['doc_kind']))}
 
 Keys: `doc_id` (short unique string), `injection` (true/false), `state` (the full document), `questions` (list
 of {{name, type, question, options, gold, rationale}}; `type` is "choice" or "score").
@@ -177,17 +190,11 @@ When the file is written, reply with only the path and the number of lines writt
 
 # --- token counting -------------------------------------------------------------------------------
 
-def heuristic_tokens(text: str) -> int:
-    return int(len(text) / 4 * HEURISTIC_FACTOR) + 1
-
-
-def load_doc_counter() -> tuple[Callable[[str], int], str]:
-    """The real Qwen3.5 tokenizer when cached locally, else len/4 x 1.5 with a warning."""
-    try:
-        return padding.load_token_counter(), "tokenizer"
-    except padding.TokenizerUnavailable as e:
-        log.warning("%s; documents measured with the len/4 x %s heuristic", e, HEURISTIC_FACTOR)
-        return heuristic_tokens, "heuristic"
+def load_doc_counter(allow_heuristic: bool = False) -> tuple[Callable[[str], int], str]:
+    """The real Qwen3.5 tokenizer from the local HF cache. Without it, raises padding.TokenizerUnavailable unless
+    allow_heuristic, which falls back (with a warning) to padding's len/4 x 2.0 estimate."""
+    count = padding.load_token_counter(allow_heuristic=allow_heuristic)
+    return count, ("heuristic" if count is padding.heuristic_tokens else "tokenizer")
 
 
 # --- ingest ---------------------------------------------------------------------------------------
@@ -252,6 +259,7 @@ def parse_doc(obj: dict, *, batch: dict, index: int, run_name: str | None, count
     if est > MAX_TOKENS:
         return [], reasons, "too_long", est
     meta = {"doc_kind": batch["doc_kind"], "domain": batch["domains"][index], "est_tokens": est,
+            "questions_written": len(questions),
             "token_count": method, "injection": (index + 1) in batch.get("injection_docs", [])}
     out: list[Decision] = []
     names: set[str] = set()
@@ -337,14 +345,21 @@ def ingest_docs(run_dir: Path | str, count: Callable[[str], int] | None = None, 
 
 def keep_docs(survivors: list[Decision], decisions: list[Decision],
               min_share: float = KEEP_DOC_SHARE) -> list[Decision]:
-    """Keep a document's surviving questions only if at least min_share of its questions survived."""
-    total = Counter(d.cluster_id for d in decisions)
+    """Keep a document's surviving questions only if they are at least min_share of the questions the writer
+    wrote (metadata questions_written; the ingested count when that is missing)."""
+    ingested = Counter(d.cluster_id for d in decisions)
+    written = {d.cluster_id: (d.metadata or {}).get("questions_written") or ingested[d.cluster_id]
+               for d in decisions}
     alive = Counter(d.cluster_id for d in survivors)
-    return [d for d in survivors if alive[d.cluster_id] >= min_share * total[d.cluster_id] - 1e-9]
+    return [d for d in survivors if alive[d.cluster_id] >= min_share * written[d.cluster_id] - 1e-9]
 
 
-def score_doc_answers(decisions: list[Decision], key: dict, answers: list[dict]) -> tuple[list[Decision], Counter]:
+def score_doc_answers(decisions: list[Decision], key: dict, answers: list[dict],
+                      survivors_out: list | None = None) -> tuple[list[Decision], Counter]:
+    """Blind-check votes per question, then the document rule. survivors_out receives the per-question survivors."""
     survivors, stats = score_answers(decisions, key, answers, cluster_filter=None)
+    if survivors_out is not None:
+        survivors_out.extend(survivors)
     kept = keep_docs(survivors, decisions)
     stats["questions_survived"] = len(survivors)
     stats["docs_dropped_below_70pct"] = len({d.cluster_id for d in survivors} - {d.cluster_id for d in kept})
