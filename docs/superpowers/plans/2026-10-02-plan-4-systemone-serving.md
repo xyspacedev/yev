@@ -206,3 +206,35 @@ All of it is CPU-testable with the existing tiny-model and FakeTok fixtures. Tas
   - the WorkflowEvals scores per workflow against Jev (invoice 0.6178, customer service 0.7598, security 0.6167, agent trace 0.7162, overall 67.8%) and the frontier entries;
   - latency per question;
   - the parity result.
+
+---
+
+### Task 7: Prefix (state) KV caching in the Engine
+
+Added 2026-10-02 at the user's request. WorkflowEvals invoice requests are a 6–9k-token state with about 42 questions, and the uncached path re-reads the state once per question (about 45 s per case on the L40S).
+
+**Files:**
+- Create: `src/jeff/serve/prefix.py`
+- Modify: `src/jeff/serve/engine.py`, `src/jeff/cli.py` (`--no-prefix-cache`, `--min-prefix-tokens`), `docs/serving.md`
+- Test: `tests/serve/test_prefix.py`
+
+**Interfaces:**
+- `common_prefix_len(seqs: list[list[int]]) -> int` returns the longest common leading token run of all sequences. It is capped at `min(len(s)) - 1`, so every row keeps at least one suffix token: the answer position must be computed inside the suffix pass.
+- `prefix_letter_logits(model, prefix_ids, suffixes, letter_ids, batch_tokens) -> list[list[float]]`:
+  1. One forward pass over `prefix_ids` with `use_cache=True`.
+  2. For each batch of suffixes: deep-copy or expand the cache to the batch size. For the hybrid Qwen3.5 cache this covers both the KV of the full-attention layers and the conv/recurrent states of the Gated DeltaNet layers.
+  3. Right-pad the suffixes, set `attention_mask` = ones over the prefix plus the suffix mask, and set `position_ids` (or `cache_position`) to continue from the prefix length.
+  4. Gather each row's own last real position, and return the letter logits there.
+- `Engine` uses the prefix path when a request has at least 2 questions and the common prefix is at least `min_prefix_tokens` (default 256). Otherwise it uses the existing exact path, unchanged.
+
+**Steps:**
+- [ ] **Step 1: Write failing tests.**
+  - `common_prefix_len` edge cases: identical sequences, no common prefix, one sequence a prefix of another.
+  - **Parity:** `prefix_letter_logits` on the tiny Llama fixture equals the full-sequence `letter_logits` to within 1e-4, for rows of different suffix lengths and letter counts.
+  - **The same parity on a tiny randomly initialised `Qwen3_5ForCausalLM`** (hybrid layers, CPU torch fallback), if transformers can build one on CPU. If it can't, say why in the report and mark the test skip-if.
+  - **Engine:** answers with the prefix cache on equal answers with it off.
+  - **The cache is never mutated across batches:** the second batch's results don't depend on batch order.
+- [ ] **Step 2: Run** them and watch them fail.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** the tests and they pass; run the full suite.
+- [ ] **Step 5: Commit** `feat(serve): state-prefix KV caching for multi-question requests`.
