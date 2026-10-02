@@ -5,13 +5,14 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 
 from yev import licences
+from yev.filters.benchmarks import BenchmarkFingerprints, overlaps_any
 from yev.filters.contamination import EmbeddingFilter, Fingerprints, has_canary, overlaps
 from yev.filters.dedupe import dedupe_key
 from yev.schema import Decision
 from yev.sources.base import SourceSpec
 from yev.sources.registry import LOCAL_SOURCES
 
-REASON_ORDER = ("licence", "dev_split", "canary", "ngram", "embedding")
+REASON_ORDER = ("licence", "dev_split", "canary", "ngram", "benchmark", "embedding")
 REPORT_KEYS = ("in", "licence", "dev_split", "canary", "ngram", "embedding", "duplicate", "out")
 
 
@@ -35,12 +36,18 @@ def _licence_ok(d: Decision, specs: dict[str, SourceSpec], cache: dict[str, bool
     return cache[d.source]
 
 
+def _rank(reason: str) -> int:
+    """Stage order of a drop reason; every "benchmark:<name>" sits at the "benchmark" stage."""
+    return REASON_ORDER.index(reason.split(":", 1)[0])
+
+
 def run_filters(
     decisions: list[Decision],
     fp: Fingerprints,
     embed: EmbeddingFilter | None,
     specs: dict[str, SourceSpec],
     batch: int = 512,
+    bench_fp: BenchmarkFingerprints | None = None,
 ) -> tuple[list[Decision], dict[str, dict[str, int]]]:
     counts: dict[str, Counter] = defaultdict(Counter)
     survivors: list[Decision] = []
@@ -52,7 +59,7 @@ def run_filters(
         counts[d.source][reason] += 1
         if d.cluster_id is not None:
             prev = dropped.get(d.cluster_id)
-            if prev is None or REASON_ORDER.index(reason) < REASON_ORDER.index(prev):
+            if prev is None or _rank(reason) < _rank(prev):
                 dropped[d.cluster_id] = reason
 
     for d in decisions:
@@ -65,6 +72,8 @@ def run_filters(
             drop(d, "canary")
         elif overlaps(d, fp):
             drop(d, "ngram")
+        elif bench_fp is not None and (hit := overlaps_any(d, bench_fp)) is not None:
+            drop(d, f"benchmark:{hit}")
         else:
             survivors.append(d)
 
@@ -114,11 +123,16 @@ def run_filters(
                 remaining.append(d)
         kept = remaining
 
-    report = {src: {k: c.get(k, 0) for k in REPORT_KEYS} for src, c in counts.items()}
+    keys = list(REPORT_KEYS)
+    if bench_fp is not None:
+        keys[keys.index("embedding"):keys.index("embedding")] = [f"benchmark:{n}" for n in bench_fp.names()]
+    report = {src: {k: c.get(k, 0) for k in keys} for src, c in counts.items()}
     return kept, report
 
 
-def assert_clean(decisions: list[Decision], fp: Fingerprints) -> None:
+def assert_clean(decisions: list[Decision], fp: Fingerprints, bench_fp: BenchmarkFingerprints | None = None) -> None:
     for d in decisions:
         if has_canary(d) or overlaps(d, fp):
             raise ContaminationError(f"{d.id} overlaps DecideBench")
+        if bench_fp is not None and (hit := overlaps_any(d, bench_fp)) is not None:
+            raise ContaminationError(f"{d.id} overlaps benchmark {hit}")

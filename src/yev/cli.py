@@ -123,9 +123,17 @@ def cmd_filter(args: argparse.Namespace) -> int:
         return 2
     decisions = [d for path in files for d in read_jsonl(path)]
     fp = load_fingerprints()
+    bench_fp = None
+    if args.benchmarks:
+        from yev.filters.benchmarks import BenchmarkFingerprints
+        if not Path(args.benchmarks).is_file():
+            print(f"benchmark fingerprints not found: {args.benchmarks}; run yev bench fingerprint first")
+            return 2
+        bench_fp = BenchmarkFingerprints.load(args.benchmarks)
     embed = None if args.no_embed else EmbeddingFilter(fp.states, sentence_transformer_encoder())
-    kept, report = run_filters(decisions, fp, embed, {s.name: s for s in [*SOURCES, *SYNTHETIC_SPECS]})
-    assert_clean(kept, fp)
+    kept, report = run_filters(decisions, fp, embed, {s.name: s for s in [*SOURCES, *SYNTHETIC_SPECS]},
+                               bench_fp=bench_fp)
+    assert_clean(kept, fp, bench_fp)
     by_source: dict[str, list] = defaultdict(list)
     for d in kept:
         by_source[d.source].append(d)
@@ -143,6 +151,8 @@ def cmd_filter(args: argparse.Namespace) -> int:
             "embedding": None if args.no_embed else EMBED_MODEL,
             "threshold": EMBED_THRESHOLD,
             "decidebench_revision": decidebench.REVISION,
+            "benchmarks": None if bench_fp is None else {"path": args.benchmarks, "names": bench_fp.names(),
+                                                         "built": bench_fp.meta.get("built")},
             "git_sha": _git_sha(),
         },
         "sources": report,
@@ -620,6 +630,29 @@ def cmd_bench_overlap(args) -> int:
     return 0
 
 
+def cmd_bench_fingerprint(args) -> int:
+    from datetime import datetime, timezone
+
+    from yev.filters import benchmarks as bm
+    bench_dir = Path(args.bench_dir)
+    sources = bm.chat_row_sources(bench_dir) if bench_dir.is_dir() else {}
+    if not sources:
+        print(f"no {bench_dir}/*/rows*.chat.jsonl; run yev bench build first")
+        return 2
+    hub = {} if args.no_hub else bm.hub_sources()
+    clash = set(sources) & set(hub)
+    if clash:
+        print(f"benchmark names used twice: {sorted(clash)}")
+        return 2
+    meta = {"built": datetime.now(timezone.utc).isoformat(timespec="seconds"), "git_sha": _git_sha(),
+            "bench_dir": str(bench_dir), "hub": {} if args.no_hub else bm.hub_meta()}
+    fp = bm.build_benchmark_fingerprints({**sources, **hub}, meta=meta)
+    fp.save(args.out)
+    summary = {n: {"items": fp.items[n], "ngrams": len(fp.hashes[n])} for n in fp.names()}
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="yev")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -642,6 +675,8 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--in", dest="inp", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--no-embed", action="store_true", help="skip the embedding filter (tests only)")
+    p.add_argument("--benchmarks", help="fingerprints JSON from yev bench fingerprint; drops rows sharing an 8-gram "
+                                        "with any reported benchmark (reason benchmark:<name>)")
     p.set_defaults(func=cmd_filter)
 
     p = sub.add_parser("shortcut", help="down-weight shortcut-solvable public rows, drop solved synthetic clusters")
@@ -742,6 +777,11 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--train", required=True, help="training *.chat.jsonl")
     p.add_argument("--dir", help="default data/bench/<name>")
     p.set_defaults(func=cmd_bench_overlap)
+    p = bsub.add_parser("fingerprint", help="8-gram fingerprints of every reported benchmark (Hub reads: network)")
+    p.add_argument("--out", required=True, help="e.g. data/bench/fingerprints.json")
+    p.add_argument("--bench-dir", default=str(BENCH_DIR), help="directory of <name>/rows*.chat.jsonl")
+    p.add_argument("--no-hub", action="store_true", help="only the local chat rows (skip WorkflowEvals and Decision Index)")
+    p.set_defaults(func=cmd_bench_fingerprint)
     return parser
 
 

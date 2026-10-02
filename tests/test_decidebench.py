@@ -83,7 +83,9 @@ def _violations(source: str) -> list[str]:
     return violations
 
 
-ALLOWED_TEST_SET_READERS = {"decidebench.py", "filters/contamination.py", "bench/decidebench.py"}
+# filters/benchmarks.py reads every reported benchmark's test rows on purpose: it fingerprints them so
+# no training row overlaps (yev bench fingerprint), the same role as filters/contamination.py.
+ALLOWED_TEST_SET_READERS = {"decidebench.py", "filters/contamination.py", "bench/decidebench.py", "filters/benchmarks.py"}
 
 
 def test_only_allowed_modules_touch_the_test_set():
