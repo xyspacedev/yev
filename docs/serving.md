@@ -182,3 +182,21 @@ python -m decision_index run --engine http \
 It posts `{"model", "state", "questions", ...extra}` to `/v1/systemone` with a 600 s timeout, sends
 `Authorization: Bearer $DECISION_INDEX_API_KEY` only if that variable is set, and validates that answer keys, types and
 choice probabilities (sum within 0.01) match the request. The suite has Choice and Noul only; its `validate` has no Score branch.
+
+## Stage 1 on the box
+
+`scripts/aws/stage1_chain.sh` runs the whole Stage 1 pipeline on the GPU box (L40S or H100) from `~/yev`. After
+`scripts/aws/sync.sh` has pushed the Stage 1 mix, launch it detached:
+
+```bash
+scripts/aws/run.sh --bg --log stage1 bash scripts/aws/stage1_chain.sh
+```
+
+Steps: a 200-step smoke run (`configs/stage1/smoke.json`, aborts under 500 tokens/s), full training
+(`configs/stage1/main.json`), `yev calibrate`, `yev eval` on Stage 0 dev and Stage 1 dev, and the position-bias check
+(`--shuffle-options 3 --min-options 7`). Progress is in `~/runs/stage1/chain.log` (`=== <step> start|done HH:MM:SS`,
+a final `STAGE1_DONE`); results are `calibration.json`, `dev_report_stage0.json`, `dev_report.json`, `position_bias.json`
+next to it. Rerun the same command to resume: a step whose output exists is skipped. A failure prints a `!!!` line and
+stops the chain. `--force` and `--skip-overlong` are never passed, so an over-long row stops eval/calibrate (evals use
+`--max-len 12288`, the training length; `STAGE1_MAX_LEN` overrides). DecideBench test, WorkflowEvals and the Decision
+Index are not part of the chain.

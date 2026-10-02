@@ -315,3 +315,85 @@ def test_workflowevals_removes_stale_results_unless_resume(tmp_path):
         stale_dst = (home / "workflowevals/yev-4b/customer_service/results.json").exists()
         assert stale_src is resume and stale_dst is resume
         assert (home / "workflowevals/yev-4b/customer_service/scores.json").exists()
+
+
+def _chain_env(tmp_path, tps="900", fail_on=None):
+    home = tmp_path / "chome"
+    (home / "venv/bin").mkdir(parents=True)
+    (home / "yev").mkdir()
+    # Fake yev: record argv; write the file the real command would (the --out path, or train_summary.json).
+    body = f'''#!/bin/bash
+echo "$*" >> "$HOME/calls"
+[ -n "{fail_on or ''}" ] && [[ "$*" == *"{fail_on or 'NEVER'}"* ]] && exit 1
+if [ "$1" = train ]; then
+  d=smoke; [[ "$*" == *main.json* ]] && d=main
+  if [ $d = smoke ]; then o="$HOME/runs/stage1-smoke"; echo '{{"tokens_per_s": {tps}, "steps": 200, "total_steps": 200}}' > "$o/train_summary.json"
+  else o="$HOME/runs/stage1"; echo '{{"steps": 5, "total_steps": 5}}' > "$o/train_summary.json"; fi
+else
+  while [ $# -gt 0 ]; do [ "$1" = --out ] && echo '{{}}' > "$2"; shift; done
+fi
+'''
+    f = home / "venv/bin/yev"
+    f.write_text(body)
+    f.chmod(0o755)
+    env = {"PATH": os.environ["PATH"], "HOME": str(home)}
+    return home, env
+
+
+def _run_chain(env):
+    return subprocess.run(["bash", "scripts/aws/stage1_chain.sh"], env=env, capture_output=True, text=True, timeout=60)
+
+
+def test_stage1_chain_order_and_resume(tmp_path):
+    home, env = _chain_env(tmp_path)
+    r = _run_chain(env)
+    assert r.returncode == 0, r.stderr
+    calls = (home / "calls").read_text().splitlines()
+    kinds = [" ".join(c.split()[:1] + [a for a in c.split() if a.startswith(("configs/", "--shuffle"))]) for c in calls]
+    assert kinds[0] == "train configs/stage1/smoke.json" and kinds[1] == "train configs/stage1/main.json"
+    assert [c.split()[0] for c in calls] == ["train", "train", "calibrate", "eval", "eval", "eval"]
+    assert "--shuffle-options 3 --min-options 7" in calls[5] and "position_bias.json" in calls[5]
+    assert "stage0/dev.chat.jsonl" in calls[3] and "dev_report_stage0.json" in calls[3]
+    assert "stage1/dev.chat.jsonl" in calls[4] and "--calibration" in calls[4]
+    assert "--base" in calls[2] and "calibration.chat.jsonl" in calls[2]
+    assert not any("--force" in c or "--skip-overlong" in c for c in calls)
+    log = (home / "runs/stage1/chain.log").read_text()
+    assert re.search(r"=== calibrate start \d\d:\d\d:\d\d", log) and re.search(r"=== calibrate done \d\d:\d\d:\d\d", log)
+    assert log.rstrip().endswith("STAGE1_DONE")
+    (home / "calls").unlink()
+    r = _run_chain(env)  # resume: every output exists, nothing runs again
+    assert r.returncode == 0 and not (home / "calls").exists()
+    assert "STAGE1_DONE" in (home / "runs/stage1/chain.log").read_text()
+
+
+def test_stage1_chain_resumes_after_partial(tmp_path):
+    home, env = _chain_env(tmp_path)
+    assert _run_chain(env).returncode == 0
+    (home / "runs/stage1/dev_report.json").unlink()
+    (home / "calls").unlink()
+    assert _run_chain(env).returncode == 0
+    calls = (home / "calls").read_text().splitlines()
+    assert len(calls) == 1 and "dev_report.json" in calls[0] and "--shuffle-options" not in calls[0]
+
+
+def test_stage1_chain_stops_on_failure(tmp_path):
+    home, env = _chain_env(tmp_path, fail_on="calibrate")
+    r = _run_chain(env)
+    assert r.returncode == 1
+    log = (home / "runs/stage1/chain.log").read_text()
+    assert "!!! calibrate failed" in log and "STAGE1_DONE" not in log
+    assert [c.split()[0] for c in (home / "calls").read_text().splitlines()] == ["train", "train", "calibrate"]
+
+
+def test_stage1_chain_aborts_on_slow_smoke(tmp_path):
+    home, env = _chain_env(tmp_path, tps="499")
+    r = _run_chain(env)
+    assert r.returncode == 1
+    assert "!!! smoke" in (home / "runs/stage1/chain.log").read_text()
+    assert [c.split()[0] for c in (home / "calls").read_text().splitlines()] == ["train"]
+
+
+def test_stage1_chain_never_runs_test_stage_steps():
+    t = Path("scripts/aws/stage1_chain.sh").read_text()
+    code = "\n".join(l for l in t.splitlines() if not l.lstrip().startswith("#"))
+    assert not re.search(r"decidebench|workflowevals|decision_index|--force|--skip-overlong", code, re.I)
