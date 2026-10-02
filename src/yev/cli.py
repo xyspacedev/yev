@@ -24,6 +24,7 @@ from yev.filters.contamination import (
 from yev.filters.pipeline import assert_clean, run_filters
 from yev.filters.shortcut import run_shortcut
 from yev.mix import build_mix, write_mix
+from yev.generators import padding
 from yev.generators import actions, drills, invoices, many_options, returns, returns_v2, scales, severity
 from yev.generators.common import EDIT_TYPES
 from yev.generators.llm.attrib import prepare_pairs, render_attrib_prompt, score_attribution
@@ -112,6 +113,31 @@ def cmd_gen_rules(args: argparse.Namespace) -> int:
     rows = RULE_GENERATORS[args.family](args.clusters, args.seed)
     n = write_jsonl(args.out, rows)
     print(f"{args.family}: {n} rows in {len({r.cluster_id for r in rows})} clusters -> {args.out}")
+    return 0
+
+
+def cmd_pad(args: argparse.Namespace) -> int:
+    lo, _, hi = args.target_tokens.partition(":")
+    target = (int(lo), int(hi))
+    rows = list(read_jsonl(args.inp))
+    docs = list(read_jsonl(args.distractors))
+    eval_docs = [d.id for d in docs if d.split in padding.EVAL_SPLITS]
+    if eval_docs:
+        print(f"distractor docs must not come from dev/calibration rows: {eval_docs[:3]}")
+        return 2
+    families = {d.family for d in docs}
+    clash = [r.id for r in rows if r.family in families]
+    if clash:
+        print(f"refusing to pad rows of the same family as the distractor docs: {clash[:3]}")
+        return 2
+    states = list(dict.fromkeys(d.state for d in docs))
+    try:
+        out = padding.pad(rows, states, target, args.seed)
+    except padding.PaddingError as e:
+        print(str(e))
+        return 2
+    n = write_jsonl(args.out, out)
+    print(f"pad: {n}/{len(rows)} rows padded to {target[0]}-{target[1]} tokens -> {args.out}")
     return 0
 
 
@@ -686,6 +712,14 @@ def make_parser() -> argparse.ArgumentParser:
                                         "a line of it (label prefix stripped) or a quoted span (3+ tokens) equals an "
                                         "item of up to 9 tokens, or whose state contains one of 6-7 tokens")
     p.set_defaults(func=cmd_filter)
+
+    p = sub.add_parser("pad", help="embed short decisions in long distractor documents (family long_padding)")
+    p.add_argument("--in", dest="inp", required=True)
+    p.add_argument("--distractors", required=True, help="Decision JSONL; distinct states are the distractor docs")
+    p.add_argument("--out", required=True)
+    p.add_argument("--target-tokens", default="2000:10000", help="LO:HI tokens of the padded state")
+    p.add_argument("--seed", type=int, default=0)
+    p.set_defaults(func=cmd_pad)
 
     p = sub.add_parser("shortcut", help="down-weight shortcut-solvable public rows, drop solved synthetic clusters")
     p.add_argument("--in", dest="inp", required=True)
