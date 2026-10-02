@@ -1,6 +1,6 @@
 import json
 
-from jeff.generators.llm.ingest import ingest_file, parse_cluster
+from yev.generators.llm.ingest import ingest_file, parse_cluster
 
 OPTS = [{"key": "approve", "description": "Approve if the claim is under $500 and has a receipt."},
         {"key": "partial", "description": "Pay half if the receipt is missing but the claim is under $500."},

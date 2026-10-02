@@ -1,6 +1,6 @@
 import math
-from jeff.train.readout import probs
-from jeff.train.metrics import evaluate, group_key
+from yev.train.readout import probs
+from yev.train.metrics import evaluate, group_key
 
 def p(id_, ans, pr, src="s", cl=None, fam="f", typ="choice"):
     return {"id": id_, "type": typ, "family": fam, "edit_type": None, "source": src, "cluster_id": cl,

@@ -1,7 +1,7 @@
 [project]
-name = "jeff"
+name = "yev"
 version = "0.1.0"
-description = "jeff-4b: an open System One decision model"
+description = "yev-4b: an open System One decision model"
 requires-python = ">=3.11"
 dependencies = [
   "datasets>=3.0",
@@ -19,14 +19,14 @@ serve = ["fastapi>=0.115", "uvicorn>=0.30", "pydantic>=2.7"]
 dev = ["pytest>=8", "httpx>=0.27"]
 
 [project.scripts]
-jeff = "jeff.cli:main"
+yev = "yev.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/jeff"]
+packages = ["src/yev"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

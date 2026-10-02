@@ -2,7 +2,7 @@ import random
 
 import pytest
 
-from jeff.sources.rules import convert_eikos, convert_ruletaker
+from yev.sources.rules import convert_eikos, convert_ruletaker
 
 R = random.Random(0)
 

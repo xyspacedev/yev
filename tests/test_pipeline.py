@@ -1,10 +1,10 @@
 import numpy as np
 import pytest
 
-from jeff.filters.contamination import EmbeddingFilter, build_fingerprints
-from jeff.filters.pipeline import ContaminationError, assert_clean, run_filters
-from jeff.schema import Decision, Option
-from jeff.sources.base import SourceSpec
+from yev.filters.contamination import EmbeddingFilter, build_fingerprints
+from yev.filters.pipeline import ContaminationError, assert_clean, run_filters
+from yev.schema import Decision, Option
+from yev.sources.base import SourceSpec
 
 BENCH = [{
     "state": "Return requested 31 days after delivery; the policy window is 30 days for unopened items only.",

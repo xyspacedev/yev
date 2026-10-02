@@ -1,6 +1,6 @@
 import random
 
-from jeff.sources.nli import (
+from yev.sources.nli import (
     convert_multi_nli,
     convert_negation,
     convert_snli_cf,

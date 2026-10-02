@@ -1,8 +1,8 @@
 from collections import Counter
 
-from jeff.generators.common import EDIT_TYPES
-from jeff.generators.llm.families import DOMAINS, FAMILIES
-from jeff.generators.llm.plan import plan_batches, render_writer_prompt
+from yev.generators.common import EDIT_TYPES
+from yev.generators.llm.families import DOMAINS, FAMILIES
+from yev.generators.llm.plan import plan_batches, render_writer_prompt
 
 
 def test_plan_covers_families_evenly_and_is_deterministic():

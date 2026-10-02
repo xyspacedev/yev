@@ -12,9 +12,9 @@ pytest.importorskip("torch")
 pytest.importorskip("transformers")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from jeff.serve.app import create_app  # noqa: E402
-from jeff.serve.contract import SystemOneResponse  # noqa: E402
-from jeff.serve.engine import Engine  # noqa: E402
+from yev.serve.app import create_app  # noqa: E402
+from yev.serve.contract import SystemOneResponse  # noqa: E402
+from yev.serve.engine import Engine  # noqa: E402
 
 FIX = Path(__file__).parent / "fixtures"
 REQUESTS = sorted(FIX.glob("request_*.json"))
@@ -129,7 +129,7 @@ def test_internal_error_is_json_500(tok, tiny_model, monkeypatch):
 def test_chat_logprobs_zero_probability_is_serialisable():
     user = json.dumps({"state": "x", "question": "q?", "options": [
         {"label": "A", "key": "a", "description": "d"}, {"label": "B", "key": "b", "description": "e"}]})
-    import jeff.serve.app as appmod
+    import yev.serve.app as appmod
     eng = Engine.__new__(Engine)
     eng.chat_probs = lambda m: {"A": 1.0, "B": 0.0}
     eng.n_tokens = lambda m: 3

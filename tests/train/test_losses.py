@@ -1,5 +1,5 @@
 import math, torch
-from jeff.train.losses import ce_soft, full_vocab_ce, pair_margin, perm_skl, rps
+from yev.train.losses import ce_soft, full_vocab_ce, pair_margin, perm_skl, rps
 
 def test_ce_soft_ignores_masked_letters_and_weights_rows():
     logits = torch.tensor([[2.0, 0.0, 99.0], [0.0, 0.0, 0.0]])

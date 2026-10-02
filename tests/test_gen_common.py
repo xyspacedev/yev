@@ -1,13 +1,13 @@
-from jeff import licences
-from jeff.generators.common import (
+from yev import licences
+from yev.generators.common import (
     EDIT_TYPES,
     SYNTH_LICENCE,
     keep_valid_clusters,
     make_cluster,
     token_edit_size,
 )
-from jeff.generators.specs import SYNTHETIC_SPECS
-from jeff.schema import Option
+from yev.generators.specs import SYNTHETIC_SPECS
+from yev.schema import Option
 
 OPTS = [Option("allow", "Allow it."), Option("deny", "Deny it.")]
 
@@ -53,7 +53,7 @@ def test_edit_types_and_specs_are_licence_clean():
 def test_spread_into_parts_is_balanced_and_separates_clusters():
     import random
 
-    from jeff.generators.common import spread_into_parts
+    from yev.generators.common import spread_into_parts
 
     rng = random.Random(0)
     items, owner = [], []

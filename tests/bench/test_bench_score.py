@@ -3,9 +3,9 @@ import math
 
 import pytest
 
-from jeff.bench import score as S
-from jeff.bench.common import chat_row, item_state, overlap, states_of
-from jeff.schema import Decision, Option
+from yev.bench import score as S
+from yev.bench.common import chat_row, item_state, overlap, states_of
+from yev.schema import Decision, Option
 
 
 def P(id_, gold, pred, keys=("yes", "no"), probs=None, **bench):

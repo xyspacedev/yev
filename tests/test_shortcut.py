@@ -2,9 +2,9 @@ import json
 from dataclasses import replace
 import random
 
-from jeff import cli
-from jeff.filters.shortcut import apply_shortcut, detector_scores, lexical_scores, masked_input, run_shortcut, shortcut_scores
-from jeff.schema import Decision, Option, read_jsonl, write_jsonl
+from yev import cli
+from yev.filters.shortcut import apply_shortcut, detector_scores, lexical_scores, masked_input, run_shortcut, shortcut_scores
+from yev.schema import Decision, Option, read_jsonl, write_jsonl
 
 OPTS = [Option("approve", "Approve the request."), Option("deny", "Deny the request.")]
 

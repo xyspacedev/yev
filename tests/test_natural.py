@@ -1,8 +1,8 @@
 from collections import Counter
 
-from jeff import cli
-from jeff.schema import Decision, Option
-from jeff.sources.base import SourceSpec, build, sample_natural
+from yev import cli
+from yev.schema import Decision, Option
+from yev.sources.base import SourceSpec, build, sample_natural
 
 
 def dec(i, gold, cluster=None):

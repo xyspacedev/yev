@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Train Stage 0 of jeff-4b from `Qwen/Qwen3.5-4B-Base` with LoRA on the AWS L40S box. Measure a learning curve and the spec's loss ablation, calibrate per-type temperatures, and report dev metrics against TEV.
+**Goal:** Train Stage 0 of yev-4b from `Qwen/Qwen3.5-4B-Base` with LoRA on the AWS L40S box. Measure a learning curve and the spec's loss ablation, calibrate per-type temperatures, and report dev metrics against TEV.
 
-**Architecture:** A new `jeff.train` package. It is made of pure, CPU-testable parts:
+**Architecture:** A new `yev.train` package. It is made of pure, CPU-testable parts:
 - `targets`: label smoothing and ordinal targets.
 - `losses`
 - `data`: tokenisation, permuted twins and unit-grouped batches.
@@ -15,14 +15,14 @@ A plain PyTorch training loop (`trainer`) ties these together. An `infer` module
 
 **Tech Stack:** Python ≥ 3.11, torch ≥ 2.9, transformers ≥ 5.0 (the box has torch 2.14.1+cu130, transformers 5.18, peft 0.21, flash-linear-attention, causal-conv1d), peft ≥ 0.17, tensorboard. uv locally; an isolated venv on the box (torch cu130).
 
-**Spec:** `docs/superpowers/specs/2026-09-29-jeff-4b-system-one-design.md` (§5 Training, §6 Readout, §7 Evaluation).
+**Spec:** `docs/superpowers/specs/2026-09-29-yev-4b-system-one-design.md` (§5 Training, §6 Readout, §7 Evaluation).
 
 ## Global Constraints
 
 - DecideBench is never trained on. `data/dev/decidebench_examples.jsonl` rows appear only in `dev.chat.jsonl`, and the DecideBench test set is never read in this plan (spec §2 rules 1 and 5).
 - Nothing is uploaded to Hugging Face or anywhere outside the user's own AWS account. Checkpoints stay on the box.
-- The box's host, SSH key path and instance id never appear in the repo. Scripts read `JEFF_TRAIN_HOST` (e.g. `ubuntu@1.2.3.4`) and `JEFF_TRAIN_KEY` (path to the key) from the environment and fail with a clear message if either is unset.
-- Prompt format is exactly `jeff.format` (TEV system prompt, JSON user turn, letters A–F). The model is supervised only at the answer-letter position.
+- The box's host, SSH key path and instance id never appear in the repo. Scripts read `YEV_TRAIN_HOST` (e.g. `ubuntu@1.2.3.4`) and `YEV_TRAIN_KEY` (path to the key) from the environment and fail with a clear message if either is unset.
+- Prompt format is exactly `yev.format` (TEV system prompt, JSON user turn, letters A–F). The model is supervised only at the answer-letter position.
 - Starting hyperparameters are given in Task 6 and are not changed without a ledger ruling.
 - Pass bar reported against (spec §1): accuracy > 92.8 % and pair accuracy > 86.0 % (TEV); stretch ≥ 95.0 %.
 
@@ -55,16 +55,16 @@ A plain PyTorch training loop (`trainer`) ties these together. An `infer` module
 
 | File | Responsibility |
 |---|---|
-| `src/jeff/train/__init__.py` | package marker |
-| `src/jeff/train/targets.py` | smoothing: `smooth_target(row, eps_hard, eps_ordinal) -> dict[str, float]` |
-| `src/jeff/train/losses.py` | `ce_soft`, `full_vocab_ce`, `pair_margin`, `perm_skl`, `rps`, `total_loss` |
-| `src/jeff/train/data.py` | parse chat rows, permuted twins, tokenise, unit-grouped token-budget batches, unit subsampling |
-| `src/jeff/train/readout.py` | letter-logit probabilities with temperature |
-| `src/jeff/train/metrics.py` | accuracy, group accuracy, ECE-15, Brier, selective accuracy, breakdowns |
-| `src/jeff/train/calibrate.py` | per-type temperature fit → `calibration.json` |
-| `src/jeff/train/infer.py` | run a model over rows → per-row letter logits |
-| `src/jeff/train/trainer.py` | config dataclass, model/LoRA load, training loop, checkpoint/resume, TensorBoard |
-| `src/jeff/cli.py` | new `train`, `eval`, `calibrate` subcommands |
+| `src/yev/train/__init__.py` | package marker |
+| `src/yev/train/targets.py` | smoothing: `smooth_target(row, eps_hard, eps_ordinal) -> dict[str, float]` |
+| `src/yev/train/losses.py` | `ce_soft`, `full_vocab_ce`, `pair_margin`, `perm_skl`, `rps`, `total_loss` |
+| `src/yev/train/data.py` | parse chat rows, permuted twins, tokenise, unit-grouped token-budget batches, unit subsampling |
+| `src/yev/train/readout.py` | letter-logit probabilities with temperature |
+| `src/yev/train/metrics.py` | accuracy, group accuracy, ECE-15, Brier, selective accuracy, breakdowns |
+| `src/yev/train/calibrate.py` | per-type temperature fit → `calibration.json` |
+| `src/yev/train/infer.py` | run a model over rows → per-row letter logits |
+| `src/yev/train/trainer.py` | config dataclass, model/LoRA load, training loop, checkpoint/resume, TensorBoard |
+| `src/yev/cli.py` | new `train`, `eval`, `calibrate` subcommands |
 | `configs/stage0/*.json` | run configs (learning curve and ablation) |
 | `scripts/aws/sync.sh`, `scripts/aws/run.sh`, `scripts/aws/setup.sh` | push code and data, run a command on the box, set up the venv |
 | `tests/train/test_*.py` | one test file per module, plus `conftest.py` with the fake tokenizer and tiny model |
@@ -75,7 +75,7 @@ A plain PyTorch training loop (`trainer`) ties these together. An `infer` module
 ### Task 1: Targets (label smoothing and ordinal smoothing)
 
 **Files:**
-- Create: `src/jeff/train/__init__.py` (empty), `src/jeff/train/targets.py`
+- Create: `src/yev/train/__init__.py` (empty), `src/yev/train/targets.py`
 - Test: `tests/train/__init__.py` (empty), `tests/train/test_targets.py`
 
 **Interfaces:**
@@ -87,7 +87,7 @@ A plain PyTorch training loop (`trainer`) ties these together. An `infer` module
 
 ```python
 import math
-from jeff.train.targets import smooth_target
+from yev.train.targets import smooth_target
 
 def close(a, b): return all(math.isclose(a[k], b[k], abs_tol=1e-9) for k in a) and a.keys() == b.keys()
 
@@ -149,14 +149,14 @@ def smooth_target(target: dict[str, float], type_: str, eps_hard: float = 0.05, 
 ```
 
 - [ ] **Step 4: Run** the tests. Expected: PASS.
-- [ ] **Step 5: Commit** with `git add src/jeff/train tests/train && git commit -m "feat(train): label and ordinal target smoothing"`.
+- [ ] **Step 5: Commit** with `git add src/yev/train tests/train && git commit -m "feat(train): label and ordinal target smoothing"`.
 
 ---
 
 ### Task 2: Losses
 
 **Files:**
-- Create: `src/jeff/train/losses.py`
+- Create: `src/yev/train/losses.py`
 - Test: `tests/train/test_losses.py`
 
 **Interfaces:**
@@ -172,7 +172,7 @@ def smooth_target(target: dict[str, float], type_: str, eps_hard: float = 0.05, 
 
 ```python
 import math, torch
-from jeff.train.losses import ce_soft, full_vocab_ce, pair_margin, perm_skl, rps
+from yev.train.losses import ce_soft, full_vocab_ce, pair_margin, perm_skl, rps
 
 def test_ce_soft_ignores_masked_letters_and_weights_rows():
     logits = torch.tensor([[2.0, 0.0, 99.0], [0.0, 0.0, 0.0]])
@@ -267,18 +267,18 @@ def rps(probs, target, mask):
 ```
 
 - [ ] **Step 4: Run** the tests. Expected: PASS.
-- [ ] **Step 5: Commit** with `git commit -am "feat(train): answer-position losses"` (after `git add src/jeff/train/losses.py tests/train/test_losses.py`).
+- [ ] **Step 5: Commit** with `git commit -am "feat(train): answer-position losses"` (after `git add src/yev/train/losses.py tests/train/test_losses.py`).
 
 ---
 
 ### Task 3: Data (parsing, twins, tokenisation, batching, subsampling)
 
 **Files:**
-- Create: `src/jeff/train/data.py`, `tests/train/conftest.py`
+- Create: `src/yev/train/data.py`, `tests/train/conftest.py`
 - Test: `tests/train/test_data.py`
 
 **Interfaces:**
-- Consumes: `jeff.format.LETTERS`; `smooth_target` (Task 1).
+- Consumes: `yev.format.LETTERS`; `smooth_target` (Task 1).
 - Produces:
   - `load_rows(path: str) -> list[dict]`: reads `*.chat.jsonl`.
   - `make_twin(row: dict, rng: random.Random) -> dict | None`: re-shuffles the final user turn's options into a new letter order. It remaps `letters`, `target` and `answer`, sets `twin_of = row["id"]`, and returns None for `type == "score"` or rows with fewer than 2 options.
@@ -355,7 +355,7 @@ def make_row():
 
 ```python
 import random
-from jeff.train.data import make_twin, letter_token_ids, encode, subsample_units, build_batches, encode_all
+from yev.train.data import make_twin, letter_token_ids, encode, subsample_units, build_batches, encode_all
 
 def test_letter_token_ids_single_and_distinct(tok):
     ids = letter_token_ids(tok)
@@ -403,7 +403,7 @@ def test_batches_keep_units_and_twins_together(tok, make_row):
 
 - [ ] **Step 3: Run** `uv run pytest tests/train/test_data.py -v`. Expected: FAIL.
 
-- [ ] **Step 4: Implement `src/jeff/train/data.py`**
+- [ ] **Step 4: Implement `src/yev/train/data.py`**
 
 ```python
 """Chat rows → tokenised, smoothed, unit-grouped training batches (Plan 3 Task 3)."""
@@ -413,8 +413,8 @@ import json
 import math
 import random
 
-from jeff.format import LETTERS
-from jeff.train.targets import smooth_target
+from yev.format import LETTERS
+from yev.train.targets import smooth_target
 
 N_MAX = 6
 
@@ -533,7 +533,7 @@ def build_batches(encoded: list[dict], token_budget: int, seed: int) -> list[lis
 ### Task 4: Readout and metrics
 
 **Files:**
-- Create: `src/jeff/train/readout.py`, `src/jeff/train/metrics.py`
+- Create: `src/yev/train/readout.py`, `src/yev/train/metrics.py`
 - Test: `tests/train/test_metrics.py`
 
 **Interfaces:**
@@ -551,8 +551,8 @@ def build_batches(encoded: list[dict], token_budget: int, seed: int) -> list[lis
 
 ```python
 import math
-from jeff.train.readout import probs
-from jeff.train.metrics import evaluate, group_key
+from yev.train.readout import probs
+from yev.train.metrics import evaluate, group_key
 
 def p(id_, ans, pr, src="s", cl=None, fam="f", typ="choice"):
     return {"id": id_, "type": typ, "family": fam, "edit_type": None, "source": src, "cluster_id": cl,
@@ -607,7 +607,7 @@ def probs(letter_logits: list[float], n: int, temperature: float = 1.0) -> list[
 """Dev metrics (spec §7) and the TEV comparison."""
 from __future__ import annotations
 from collections import defaultdict
-from jeff.format import LETTERS
+from yev.format import LETTERS
 
 TEV_ACC, TEV_GROUP = 0.928, 0.860
 
@@ -672,7 +672,7 @@ def evaluate(preds: list[dict]) -> dict:
 ### Task 5: Per-type temperature calibration
 
 **Files:**
-- Create: `src/jeff/train/calibrate.py`
+- Create: `src/yev/train/calibrate.py`
 - Test: `tests/train/test_calibrate.py`
 
 **Interfaces:**
@@ -685,7 +685,7 @@ def evaluate(preds: list[dict]) -> dict:
 
 ```python
 import math, random
-from jeff.train.calibrate import fit_temperatures
+from yev.train.calibrate import fit_temperatures
 
 def test_recovers_overconfident_temperature():
     rng = random.Random(0)
@@ -759,8 +759,8 @@ def write_calibration(path, temps: dict, meta: dict) -> None:
 ### Task 6: Trainer, inference and CLI
 
 **Files:**
-- Create: `src/jeff/train/trainer.py`, `src/jeff/train/infer.py`, `configs/stage0/lc25.json`, `lc50.json`, `lc100.json`, `ab_pair.json`, `ab_perm.json`, `ab_both.json`, `smoke.json`
-- Modify: `src/jeff/cli.py` (add `train`, `eval` and `calibrate` subcommands), `pyproject.toml` (add a `train` extra: `["transformers>=5.0", "peft>=0.17", "accelerate>=1.0", "tensorboard>=2.17"]`)
+- Create: `src/yev/train/trainer.py`, `src/yev/train/infer.py`, `configs/stage0/lc25.json`, `lc50.json`, `lc100.json`, `ab_pair.json`, `ab_perm.json`, `ab_both.json`, `smoke.json`
+- Modify: `src/yev/cli.py` (add `train`, `eval` and `calibrate` subcommands), `pyproject.toml` (add a `train` extra: `["transformers>=5.0", "peft>=0.17", "accelerate>=1.0", "tensorboard>=2.17"]`)
 - Test: `tests/train/test_trainer.py`
 
 **Interfaces:**
@@ -786,9 +786,9 @@ def write_calibration(path, temps: dict, meta: dict) -> None:
     Tests pass `tokenizer` and `model`; the CLI loads them from `model_path`.
   - `infer.letter_logits(model, tokenizer, rows: list[dict], max_len: int, batch_tokens: int = 16384) -> list[list[float]]`: one forward pass per row, returning the 6 letter logits at the last position.
   - CLI:
-    - `jeff train --config configs/stage0/lc100.json`
-    - `jeff eval --model <dir> --base <model_path> --data <dev.chat.jsonl> [--calibration <json>] --out <report.json>`
-    - `jeff calibrate --model <dir> --base <model_path> --data <calibration.chat.jsonl> --out <calibration.json>`
+    - `yev train --config configs/stage0/lc100.json`
+    - `yev eval --model <dir> --base <model_path> --data <dev.chat.jsonl> [--calibration <json>] --out <report.json>`
+    - `yev calibrate --model <dir> --base <model_path> --data <calibration.chat.jsonl> --out <calibration.json>`
 
     `--model` is a LoRA adapter dir or merged model dir. `--base` is needed for adapters.
 
@@ -804,8 +804,8 @@ def write_calibration(path, temps: dict, meta: dict) -> None:
 
 ```python
 import json
-from jeff.train.trainer import TrainConfig, train
-from jeff.train.infer import letter_logits
+from yev.train.trainer import TrainConfig, train
+from yev.train.infer import letter_logits
 
 def write_rows(path, make_row, n=24):
     with open(path, "w") as f:
@@ -859,7 +859,7 @@ def test_config_rejects_unknown_keys(tmp_path):
 """Letter logits at the answer position, one forward pass per row (spec §6)."""
 from __future__ import annotations
 import torch
-from jeff.train.data import letter_token_ids, N_MAX
+from yev.train.data import letter_token_ids, N_MAX
 
 
 @torch.no_grad()
@@ -908,8 +908,8 @@ from pathlib import Path
 
 import torch
 
-from jeff.train import losses as L
-from jeff.train.data import N_MAX, build_batches, encode_all, letter_token_ids, load_rows, subsample_units
+from yev.train import losses as L
+from yev.train.data import N_MAX, build_batches, encode_all, letter_token_ids, load_rows, subsample_units
 
 
 @dataclass
@@ -1104,14 +1104,14 @@ def train(cfg: TrainConfig, tokenizer=None, model=None) -> dict:
 
 Adjust only what the tests prove necessary. For example, `save_pretrained` on a bare `LlamaForCausalLM` in the resume test must be matched by the full-model load branch.
 
-- [ ] **Step 5: Add the CLI subcommands** in `src/jeff/cli.py`, following the existing argparse pattern:
+- [ ] **Step 5: Add the CLI subcommands** in `src/yev/cli.py`, following the existing argparse pattern:
   - `train` calls `train(TrainConfig.from_json(args.config))` and prints the summary JSON.
   - `eval`:
     - loads the base model and tokenizer from `--base` (bf16, CUDA if available), then applies `peft.PeftModel.from_pretrained(model, args.model)` when `adapter_config.json` exists in `--model`, otherwise loads `--model` directly;
     - reads rows, calls `letter_logits`, applies `readout.probs` with the type's temperature from `--calibration` (default 1.0);
     - builds `preds` and writes `metrics.evaluate(preds)` to `--out`.
   - `calibrate`: same loading, then builds items and writes `fit_temperatures` output with `write_calibration`, with meta `{model, data, n}`.
-- [ ] **Step 6: Write the configs.** Every config sets `model_path: "/home/ubuntu/models/Qwen3.5-4B-Base"`, `train_path: "/home/ubuntu/jeff/data/mix/stage0/train.chat.jsonl"` and `out_dir: "/home/ubuntu/runs/<name>"`.
+- [ ] **Step 6: Write the configs.** Every config sets `model_path: "/home/ubuntu/models/Qwen3.5-4B-Base"`, `train_path: "/home/ubuntu/yev/data/mix/stage0/train.chat.jsonl"` and `out_dir: "/home/ubuntu/runs/<name>"`.
 
 | file | name | fraction | lambda_pair | lambda_perm | twin_rate | lambda_rps | max_steps |
 |---|---|---|---|---|---|---|---|
@@ -1136,11 +1136,11 @@ Adjust only what the tests prove necessary. For example, `save_pretrained` on a 
 - Test: `tests/test_aws_scripts.py`
 
 **Interfaces:**
-- `sync.sh`: requires `JEFF_TRAIN_HOST` and `JEFF_TRAIN_KEY`, and exits 2 with a message naming the missing variable. It then:
-  - runs `git archive HEAD | ssh … 'mkdir -p ~/jeff && tar -x -C ~/jeff'`;
-  - rsyncs `data/mix/stage0/` and `data/dev/decidebench_examples.jsonl` to `~/jeff/data/…`;
+- `sync.sh`: requires `YEV_TRAIN_HOST` and `YEV_TRAIN_KEY`, and exits 2 with a message naming the missing variable. It then:
+  - runs `git archive HEAD | ssh … 'mkdir -p ~/yev && tar -x -C ~/yev'`;
+  - rsyncs `data/mix/stage0/` and `data/dev/decidebench_examples.jsonl` to `~/yev/data/…`;
   - never sends anything else under `data/`.
-- `run.sh <cmd…>`: same env checks. It runs `cd ~/jeff && ~/venv/bin/pip install -q -e '.[train]' --no-deps && <cmd>` over ssh inside `nohup … > ~/runs/<first arg basename>.log 2>&1 &` when `--bg` is the first argument, and in the foreground otherwise.
+- `run.sh <cmd…>`: same env checks. It runs `cd ~/yev && ~/venv/bin/pip install -q -e '.[train]' --no-deps && <cmd>` over ssh inside `nohup … > ~/runs/<first arg basename>.log 2>&1 &` when `--bg` is the first argument, and in the foreground otherwise.
 - `setup.sh`: the remote venv recipe already run on the box. It builds an **isolated** venv (no system site packages: Ubuntu's `cryptography` and `pyOpenSSL` break transformers' imports) from `/opt/pytorch/bin/python`, then runs `pip install torch --index-url https://download.pytorch.org/whl/cu130` and the `train` extra's packages, then `pip install flash-linear-attention` and `pip install causal-conv1d --no-build-isolation`, then `hf download Qwen/Qwen3.5-4B-Base --local-dir ~/models/Qwen3.5-4B-Base`. It is kept so the box can be rebuilt.
 
 - [ ] **Step 1: Write the failing test.** Both scripts exit 2 when the environment variables are unset, and no script contains an IP address or a `.pem` path.
@@ -1153,14 +1153,14 @@ def test_scripts_require_env_and_contain_no_host():
     for s in ("sync.sh", "run.sh"):
         p = Path("scripts/aws") / s
         r = subprocess.run(["bash", str(p), "echo"], env={"PATH": os.environ["PATH"]}, capture_output=True, text=True)
-        assert r.returncode == 2 and "JEFF_TRAIN_" in r.stderr
+        assert r.returncode == 2 and "YEV_TRAIN_" in r.stderr
     for p in Path("scripts/aws").glob("*.sh"):
         t = p.read_text()
         assert not re.search(r"\b\d{1,3}(\.\d{1,3}){3}\b", t) and ".pem" not in t
 ```
 
 - [ ] **Step 2: Run** the test. Expected: FAIL.
-- [ ] **Step 3: Implement the three scripts** (`set -euo pipefail`; `: "${JEFF_TRAIN_HOST:?JEFF_TRAIN_HOST is not set}"` style checks, but exit 2: `[ -n "${JEFF_TRAIN_HOST:-}" ] || { echo "JEFF_TRAIN_HOST is not set" >&2; exit 2; }`).
+- [ ] **Step 3: Implement the three scripts** (`set -euo pipefail`; `: "${YEV_TRAIN_HOST:?YEV_TRAIN_HOST is not set}"` style checks, but exit 2: `[ -n "${YEV_TRAIN_HOST:-}" ] || { echo "YEV_TRAIN_HOST is not set" >&2; exit 2; }`).
 - [ ] **Step 4: Run** the test. Expected: PASS.
 - [ ] **Step 5: Commit** with `feat(aws): sync and run scripts for the training box`.
 
@@ -1168,17 +1168,17 @@ def test_scripts_require_env_and_contain_no_host():
 
 ### Task 8: Runs on the box (controller runbook, not a subagent code task)
 
-Before starting, set `JEFF_TRAIN_HOST` and `JEFF_TRAIN_KEY` from the controller's memory notes. They are never written into the repo.
+Before starting, set `YEV_TRAIN_HOST` and `YEV_TRAIN_KEY` from the controller's memory notes. They are never written into the repo.
 
 - [ ] **Step 1: Sync and smoke test.**
   1. `scripts/aws/sync.sh`
-  2. `scripts/aws/run.sh jeff train --config configs/stage0/smoke.json`
+  2. `scripts/aws/run.sh yev train --config configs/stage0/smoke.json`
 
   Expected: 200 steps, finite loss, and a `train_summary.json` with `tokens_per_s`. Record `encode_stats.dropped_overlong`; if it is above 0.5 % of rows, report it. Estimate hours per full epoch as `train tokens / tokens_per_s`. If that is over 6 h, STOP and report before the learning curve, with the dollar estimate at the spot price.
 - [ ] **Step 2: Real-model tokenizer check.** (Letters A–F were already confirmed as single tokens 32–37 on the box; rerun anyway.) On the box, run `~/venv/bin/python -c` to call `letter_token_ids` on the Qwen tokenizer. It must pass. If a letter isn't a single token, STOP and report.
 - [ ] **Step 3: Learning curve.** Run `lc25`, `lc50` and `lc100` one after another with `run.sh --bg`, watching the logs. After each run:
-  1. `jeff calibrate --model ~/runs/<name>/final --base ~/models/Qwen3.5-4B-Base --data ~/jeff/data/mix/stage0/calibration.chat.jsonl --out ~/runs/<name>/calibration.json`
-  2. `jeff eval … --data ~/jeff/data/mix/stage0/dev.chat.jsonl --calibration ~/runs/<name>/calibration.json --out ~/runs/<name>/dev_report.json`
+  1. `yev calibrate --model ~/runs/<name>/final --base ~/models/Qwen3.5-4B-Base --data ~/yev/data/mix/stage0/calibration.chat.jsonl --out ~/runs/<name>/calibration.json`
+  2. `yev eval … --data ~/yev/data/mix/stage0/dev.chat.jsonl --calibration ~/runs/<name>/calibration.json --out ~/runs/<name>/dev_report.json`
   3. Copy both JSON files back to `data/runs/<name>/` locally (git-ignored).
 - [ ] **Step 4: Learning-curve checkpoint.** Report to the user:
   - a table over 25/50/100 % of overall accuracy, Opus-holdout group accuracy, DecideBench accuracy and template-group accuracy, ECE and Brier;

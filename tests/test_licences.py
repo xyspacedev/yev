@@ -1,6 +1,6 @@
 import pytest
 
-from jeff.licences import FORBIDDEN_DATASETS, LicenceError, check, is_allowed
+from yev.licences import FORBIDDEN_DATASETS, LicenceError, check, is_allowed
 
 
 def test_permissive_licences_allowed():
@@ -105,7 +105,7 @@ def test_denylist_gaps_closed(hf_id):
 
 @pytest.mark.parametrize("config", ["mcq", "llm_judge"])
 def test_when2call_eval_configs_forbidden_by_config(config):
-    from jeff import licences
+    from yev import licences
 
     assert ("nvidia/when2call", config) in licences._FORBIDDEN_CONFIGS_LC
     with pytest.raises(LicenceError, match="forbidden"):

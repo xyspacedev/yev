@@ -8,9 +8,9 @@ import pytest
 pytest.importorskip("pydantic")
 from pydantic import TypeAdapter  # noqa: E402
 
-from jeff.format import SYSTEM_PROMPT, user_turn  # noqa: E402
-from jeff.schema import Decision, Option  # noqa: E402
-from jeff.serve.contract import (  # noqa: E402
+from yev.format import SYSTEM_PROMPT, user_turn  # noqa: E402
+from yev.schema import Decision, Option  # noqa: E402
+from yev.serve.contract import (  # noqa: E402
     ChoiceAnswer,
     NoulAnswer,
     QuestionSpec,
@@ -18,7 +18,7 @@ from jeff.serve.contract import (  # noqa: E402
     SystemOneRequest,
     SystemOneResponse,
 )
-from jeff.serve.mapping import (  # noqa: E402
+from yev.serve.mapping import (  # noqa: E402
     DEFAULT_QUESTION,
     MAX_LETTERS,
     Unsupported,

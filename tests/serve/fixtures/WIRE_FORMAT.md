@@ -6,7 +6,7 @@ also checked by running the real SDK against an `httpx2.MockTransport`.
 
 Paths: `models.py` is `typesafe_sdk/_schemas/models.py`, generated from
 `https://api.typesafe.ai/openapi.json`. The other bare paths are under `typesafe_sdk/_core/`.
-The pydantic mirror is `src/jeff/serve/contract.py`.
+The pydantic mirror is `src/yev/serve/contract.py`.
 
 ## Request: `POST /v1/systemone`, JSON body
 

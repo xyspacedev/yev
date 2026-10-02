@@ -4,23 +4,23 @@
 
 **Goal:** Serve yev-4b behind TypeSafe's `POST /v1/systemone` contract and an OpenAI-compatible `POST /v1/chat/completions`, using exactly the letter-logit readout we evaluated with. Then score it on TypeSafe WorkflowEvals through the official runner.
 
-**Architecture:** A new `jeff.serve` package with five pieces:
+**Architecture:** A new `yev.serve` package with five pieces:
 - `contract`: pydantic models of the TypeSafe wire format, pinned to `typesafe-sdk==0.7.2`.
 - `mapping`: System One question → our chat row → answer.
 - `engine`: model, adapter and calibration loading; batched letter logits for up to 26 letters.
 - `app`: FastAPI with `/v1/systemone`, `/v1/chat/completions`, `/v1/models`, `/health`.
-- `jeff serve` CLI.
+- `yev serve` CLI.
 
 All of it is CPU-testable with the existing tiny-model and FakeTok fixtures. Task 6 is a controller runbook on the AWS box: restart, serve, run WorkflowEvals, stop.
 
 **Tech Stack:** Python ≥ 3.11, FastAPI, uvicorn, pydantic v2, torch, transformers ≥ 5, peft. The `serve` optional extra.
 
-**Spec:** `docs/superpowers/specs/2026-09-29-jeff-4b-system-one-design.md` §6 (readout and serving), §7 (evaluation).
+**Spec:** `docs/superpowers/specs/2026-09-29-yev-4b-system-one-design.md` §6 (readout and serving), §7 (evaluation).
 
 ## Global Constraints
 
 - The readout is exactly the evaluated one:
-  - TEV system prompt and JSON user turn from `jeff.format`;
+  - TEV system prompt and JSON user turn from `yev.format`;
   - `apply_chat_template(..., add_generation_prompt=True, tokenize=True, enable_thinking=False)`;
   - right-padding;
   - letter logits at each row's own last position;
@@ -28,7 +28,7 @@ All of it is CPU-testable with the existing tiny-model and FakeTok fixtures. Tas
 - One forward pass per question; no generated text for `/v1/systemone`.
 - Letters A–Z. More than 26 options is refused (HTTP 422, `{"error": {"type": "unsupported", "reason": "too many options (N > 26)"}}`), never truncated or filtered.
 - Rows longer than `max_len` are refused (422 `unsupported`, reason `state too long`), never truncated.
-- No upload anywhere. The box's host, key and instance id never enter the repo (scripts read `JEFF_TRAIN_HOST` and `JEFF_TRAIN_KEY`).
+- No upload anywhere. The box's host, key and instance id never enter the repo (scripts read `YEV_TRAIN_HOST` and `YEV_TRAIN_KEY`).
 - Probabilities in every answer are finite and sum to 1 within 1e-6. The chosen key is always one of the options.
 
 ## Rulings (deviations from the spec)
@@ -51,14 +51,14 @@ All of it is CPU-testable with the existing tiny-model and FakeTok fixtures. Tas
 
 | File | Responsibility |
 |---|---|
-| `src/jeff/serve/__init__.py` | package |
-| `src/jeff/serve/contract.py` | pydantic request/response models for `/v1/systemone` and `/v1/chat/completions` |
-| `src/jeff/serve/mapping.py` | `to_rows(state, questions)` and `to_answers(questions, letter_probs)` |
-| `src/jeff/serve/engine.py` | `Engine(model_dir, base, calibration, max_len, batch_tokens)` with `.answer(state, questions)` and `.chat(messages)` |
-| `src/jeff/serve/app.py` | FastAPI app factory `create_app(engine, model_name)` |
-| `src/jeff/train/data.py` | generalise `letter_token_ids(tokenizer, n=6)` |
-| `src/jeff/train/infer.py` | `letter_logits(..., n_letters=6)` |
-| `src/jeff/cli.py` | `jeff serve` |
+| `src/yev/serve/__init__.py` | package |
+| `src/yev/serve/contract.py` | pydantic request/response models for `/v1/systemone` and `/v1/chat/completions` |
+| `src/yev/serve/mapping.py` | `to_rows(state, questions)` and `to_answers(questions, letter_probs)` |
+| `src/yev/serve/engine.py` | `Engine(model_dir, base, calibration, max_len, batch_tokens)` with `.answer(state, questions)` and `.chat(messages)` |
+| `src/yev/serve/app.py` | FastAPI app factory `create_app(engine, model_name)` |
+| `src/yev/train/data.py` | generalise `letter_token_ids(tokenizer, n=6)` |
+| `src/yev/train/infer.py` | `letter_logits(..., n_letters=6)` |
+| `src/yev/cli.py` | `yev serve` |
 | `scripts/aws/workflowevals.sh` | box runbook helper |
 | `tests/serve/test_*.py` | tests |
 | `pyproject.toml` | `serve` extra: `fastapi>=0.115`, `uvicorn>=0.30`, `pydantic>=2.7` |
@@ -68,7 +68,7 @@ All of it is CPU-testable with the existing tiny-model and FakeTok fixtures. Tas
 ### Task 1: Contract models pinned to the TypeSafe SDK
 
 **Files:**
-- Create: `src/jeff/serve/__init__.py`, `src/jeff/serve/contract.py`, `tests/serve/__init__.py`, `tests/serve/test_contract.py`, `tests/serve/fixtures/` (JSON samples)
+- Create: `src/yev/serve/__init__.py`, `src/yev/serve/contract.py`, `tests/serve/__init__.py`, `tests/serve/test_contract.py`, `tests/serve/fixtures/` (JSON samples)
 
 **Interfaces:**
 - Produces: pydantic v2 models.
@@ -99,10 +99,10 @@ All of it is CPU-testable with the existing tiny-model and FakeTok fixtures. Tas
 ### Task 2: Mapping (question ↔ our chat row ↔ answer)
 
 **Files:**
-- Create: `src/jeff/serve/mapping.py`, `tests/serve/test_mapping.py`
+- Create: `src/yev/serve/mapping.py`, `tests/serve/test_mapping.py`
 
 **Interfaces:**
-- Consumes: `jeff.format.SYSTEM_PROMPT`, `user_turn` (or the same JSON layout), `contract` models.
+- Consumes: `yev.format.SYSTEM_PROMPT`, `user_turn` (or the same JSON layout), `contract` models.
 - Produces:
   - `MAX_LETTERS = 26`.
   - `class Unsupported(Exception)` with `reason`.
@@ -114,7 +114,7 @@ All of it is CPU-testable with the existing tiny-model and FakeTok fixtures. Tas
   - `test_choice_probs_sum_to_one_and_keys_echo_criteria`.
   - `test_score_expected_level`: levels 1..5, probs `[0, 0, 0.5, 0.5, 0]` give score 3.5 (or per the contract's rounding) and confidence 0.5.
   - `test_too_many_options_refuses_whole_request`: one question with 27 options in a request of three raises `Unsupported` and builds no rows.
-  - `test_user_turn_matches_training_format`: the final user turn of a built row equals `jeff.format.user_turn` output for the equivalent Decision.
+  - `test_user_turn_matches_training_format`: the final user turn of a built row equals `yev.format.user_turn` output for the equivalent Decision.
 - [ ] **Step 2: Run** them and watch them fail.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the tests and they pass; run the full suite.
@@ -125,11 +125,11 @@ All of it is CPU-testable with the existing tiny-model and FakeTok fixtures. Tas
 ### Task 3: Engine (model, calibration, N-letter logits)
 
 **Files:**
-- Modify: `src/jeff/train/data.py` (`letter_token_ids(tokenizer, n=N_MAX)`), `src/jeff/train/infer.py` (`letter_logits(..., n_letters=N_MAX)`)
-- Create: `src/jeff/serve/engine.py`, `tests/serve/test_engine.py`
+- Modify: `src/yev/train/data.py` (`letter_token_ids(tokenizer, n=N_MAX)`), `src/yev/train/infer.py` (`letter_logits(..., n_letters=N_MAX)`)
+- Create: `src/yev/serve/engine.py`, `tests/serve/test_engine.py`
 
 **Interfaces:**
-- Consumes: `jeff.train.infer.load`, `letter_logits`, `jeff.train.readout.probs`, `mapping`.
+- Consumes: `yev.train.infer.load`, `letter_logits`, `yev.train.readout.probs`, `mapping`.
 - Produces: `Engine(model_dir: str, base: str | None, calibration: str | None, max_len: int = 16384, batch_tokens: int = 16384, *, model=None, tokenizer=None)`. Tests inject `model` and `tokenizer`.
   - `.answer(state, questions) -> (answers, usage)`, where `usage = {"questions": n, "input_tokens": total}`.
   - `.chat(messages) -> letter`: the argmax over the letters present in the final user turn's options, which must be our JSON format; anything else raises `Unsupported`.
@@ -147,11 +147,11 @@ All of it is CPU-testable with the existing tiny-model and FakeTok fixtures. Tas
 
 ---
 
-### Task 4: FastAPI app and `jeff serve`
+### Task 4: FastAPI app and `yev serve`
 
 **Files:**
-- Create: `src/jeff/serve/app.py`, `tests/serve/test_app.py`
-- Modify: `src/jeff/cli.py`, `pyproject.toml` (the `serve` extra)
+- Create: `src/yev/serve/app.py`, `tests/serve/test_app.py`
+- Modify: `src/yev/cli.py`, `pyproject.toml` (the `serve` extra)
 
 **Interfaces:**
 - `create_app(engine, model_name: str = "yev-4b") -> FastAPI`, with routes:
@@ -159,7 +159,7 @@ All of it is CPU-testable with the existing tiny-model and FakeTok fixtures. Tas
   - `POST /v1/chat/completions` → OpenAI-compatible response with a one-letter `content`. If `logprobs: true`, it includes the letter probabilities as `top_logprobs`.
   - `GET /v1/models`, `GET /health`.
   - The request's `model` field is accepted and echoed but not used to choose a model, since one model is loaded.
-- CLI: `jeff serve --model <adapter or full dir> --base <base> --calibration <json> --host 127.0.0.1 --port 8000 [--max-len 16384]`.
+- CLI: `yev serve --model <adapter or full dir> --base <base> --calibration <json> --host 127.0.0.1 --port 8000 [--max-len 16384]`.
 
 - [ ] **Step 1: Write failing tests** with `fastapi.testclient.TestClient` and an engine built on the tiny model:
   - every fixture request from Task 1 gets a 200 whose body validates as `SystemOneResponse`;
@@ -169,7 +169,7 @@ All of it is CPU-testable with the existing tiny-model and FakeTok fixtures. Tas
 - [ ] **Step 2: Run** them and watch them fail.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the tests and they pass; run the full suite.
-- [ ] **Step 5: Commit** `feat(serve): FastAPI /v1/systemone and /v1/chat/completions with jeff serve`.
+- [ ] **Step 5: Commit** `feat(serve): FastAPI /v1/systemone and /v1/chat/completions with yev serve`.
 
 ---
 
@@ -188,7 +188,7 @@ All of it is CPU-testable with the existing tiny-model and FakeTok fixtures. Tas
 
   The runner rejects every TypeSafe model name except `jev-1.13.0`. We pass that name and our server ignores it. The README states this explicitly.
 - `docs/serving.md` covers:
-  - how to run `jeff serve`, with request and response examples for all three types and the chat endpoint;
+  - how to run `yev serve`, with request and response examples for all three types and the chat endpoint;
   - the 26-letter limit and the out-of-distribution note for more than 6 options;
   - how WorkflowEvals and the Decision Index kit's `http` engine call it.
 
@@ -198,9 +198,9 @@ All of it is CPU-testable with the existing tiny-model and FakeTok fixtures. Tas
 
 ### Task 6: Run on the box (controller runbook)
 
-- [ ] **Step 1:** Start the instance (`aws ec2 start-instances`). Read the new public IP. If ssh fails, check the laptop IP against the security group. Export `JEFF_TRAIN_HOST` and `JEFF_TRAIN_KEY`.
+- [ ] **Step 1:** Start the instance (`aws ec2 start-instances`). Read the new public IP. If ssh fails, check the laptop IP against the security group. Export `YEV_TRAIN_HOST` and `YEV_TRAIN_KEY`.
 - [ ] **Step 2:** `scripts/aws/sync.sh`, then `scripts/aws/run.sh pip install -e '.[train,serve]'`. Copy `~/runs/lc100/final` and `calibration.json` back to the laptop under `release/yev-4b/weights/` (git-ignored), and record the train file's sha256 and the box's code commit for the release checklist.
-- [ ] **Step 3: Smoke-test the server.** Start `jeff serve --model ~/runs/lc100/final --base ~/models/Qwen3.5-4B-Base --calibration ~/runs/lc100/calibration.json` under nohup and setsid, then send the Task 1 fixtures with curl. Every response must validate. Then run 20 DecideBench *dev* rows through `/v1/chat/completions`: their letters must equal `jeff eval`'s argmax for the same rows. This is a parity check, so the dev rows are fine to use; never the test set.
+- [ ] **Step 3: Smoke-test the server.** Start `yev serve --model ~/runs/lc100/final --base ~/models/Qwen3.5-4B-Base --calibration ~/runs/lc100/calibration.json` under nohup and setsid, then send the Task 1 fixtures with curl. Every response must validate. Then run 20 DecideBench *dev* rows through `/v1/chat/completions`: their letters must equal `yev eval`'s argmax for the same rows. This is a parity check, so the dev rows are fine to use; never the test set.
 - [ ] **Step 4:** Run `scripts/aws/workflowevals.sh`. Then fetch the scores to `data/bench_results/workflowevals/`.
 - [ ] **Step 5:** Stop the instance (`aws ec2 stop-instances`). Report to the user:
   - the WorkflowEvals scores per workflow against Jev (invoice 0.6178, customer service 0.7598, security 0.6167, agent trace 0.7162, overall 67.8%) and the frontier entries;
@@ -214,8 +214,8 @@ All of it is CPU-testable with the existing tiny-model and FakeTok fixtures. Tas
 Added 2026-10-02 at the user's request. WorkflowEvals invoice requests are a 6–9k-token state with about 42 questions, and the uncached path re-reads the state once per question (about 45 s per case on the L40S).
 
 **Files:**
-- Create: `src/jeff/serve/prefix.py`
-- Modify: `src/jeff/serve/engine.py`, `src/jeff/cli.py` (`--no-prefix-cache`, `--min-prefix-tokens`), `docs/serving.md`
+- Create: `src/yev/serve/prefix.py`
+- Modify: `src/yev/serve/engine.py`, `src/yev/cli.py` (`--no-prefix-cache`, `--min-prefix-tokens`), `docs/serving.md`
 - Test: `tests/serve/test_prefix.py`
 
 **Interfaces:**

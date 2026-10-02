@@ -81,7 +81,7 @@ For comparison, TEV scores 92.8 % / 86.0 % with examples and 90.0 % zero-shot, a
 examples. yev-4b clears TEV and is statistically tied with imajev-4b; it does not beat imajev-4b.
 
 This is the **Stage 0** model of the planned pipeline: one epoch of LoRA on 44k rows. Stages 1, 2 and 2b (broader data,
-mined hard examples, a calibration pass) have not been run. The code repository still uses the working name `jeff`.
+mined hard examples, a calibration pass) have not been run. The code repository still uses the working name `yev`.
 
 > Status: draft card. Items marked **TBD** are listed in `RELEASE_CHECKLIST.md`.
 
@@ -167,7 +167,7 @@ sends compact JSON (`","`, `":"`); our DecideBench scores use the harness format
 
 ## How to use
 
-The snippet below reproduces the training repo's readout exactly (`src/jeff/train/infer.py` + `readout.py`):
+The snippet below reproduces the training repo's readout exactly (`src/yev/train/infer.py` + `readout.py`):
 
 - right-padding;
 - the logit at each row's own last real position;
@@ -447,7 +447,7 @@ The other benchmarks are reported with their own overlap under Evaluation.
 | Time | 4.71 h for the release run; 25.3 GPU-hours of training across all six runs |
 | Software | torch 2.14.1+cu130, transformers 5.18, peft 0.21, flash-linear-attention, causal-conv1d |
 | Seed | 0 (mix and training) |
-| Code | the `jeff` training repo, `configs/stage0/lc100.json`. The training-run git SHA was not recorded: **TBD** |
+| Code | the `yev` training repo, `configs/stage0/lc100.json`. The training-run git SHA was not recorded: **TBD** |
 
 **Calibration.** Per-type temperatures were fitted by NLL on a separate 2,000-row calibration split:
 

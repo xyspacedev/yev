@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from jeff import decidebench
+from yev import decidebench
 
 RAW = {
     "id": "action_review-001a",
@@ -88,7 +88,7 @@ ALLOWED_TEST_SET_READERS = {"decidebench.py", "filters/contamination.py", "bench
 
 def test_only_allowed_modules_touch_the_test_set():
     """AST-based guard: only decidebench.py and filters/contamination.py can access test set."""
-    src = Path(__file__).resolve().parents[1] / "src" / "jeff"
+    src = Path(__file__).resolve().parents[1] / "src" / "yev"
     for py in src.rglob("*.py"):
         relative_path = py.relative_to(src).as_posix()
         if relative_path not in ALLOWED_TEST_SET_READERS:
@@ -98,11 +98,11 @@ def test_only_allowed_modules_touch_the_test_set():
 
 
 @pytest.mark.parametrize("source,should_have_violations", [
-    ("from jeff.decidebench import load_test_raw as x", True),
+    ("from yev.decidebench import load_test_raw as x", True),
     ("p = \"data/test.jsonl\"", True),
     ("decidebench._read_raw(decidebench._download(\"x\"))", True),
     ("from huggingface_hub import hf_hub_download", True),
-    ("from jeff.decidebench import load_examples", False),
+    ("from yev.decidebench import load_examples", False),
 ])
 def test_guard_catches_violations(source, should_have_violations):
     """Verify the guard correctly identifies violations and valid imports."""

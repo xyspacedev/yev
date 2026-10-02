@@ -1,8 +1,8 @@
 import pytest
 
-from jeff.generators.common import make_cluster
-from jeff.generators.llm.check import prepare_sheets, render_checker_prompt, score_answers
-from jeff.schema import Option
+from yev.generators.common import make_cluster
+from yev.generators.llm.check import prepare_sheets, render_checker_prompt, score_answers
+from yev.schema import Option
 
 CHOICE = [Option("a", "Option a."), Option("b", "Option b."), Option("c", "Option c.")]
 SCALE = [Option("low", "Low."), Option("mid", "Mid."), Option("high", "High.")]

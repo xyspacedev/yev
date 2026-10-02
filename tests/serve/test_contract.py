@@ -8,7 +8,7 @@ import pytest
 pydantic = pytest.importorskip("pydantic")
 from pydantic import TypeAdapter, ValidationError  # noqa: E402
 
-from jeff.serve.contract import (  # noqa: E402
+from yev.serve.contract import (  # noqa: E402
     ChatRequest,
     ChatResponse,
     ChoiceAnswer,

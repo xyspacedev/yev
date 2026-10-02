@@ -1,8 +1,8 @@
 import random
 
-from jeff.sources.intent import NONE_OPTION, convert_go_emotions, intent_converter
-from jeff.sources.replay import convert_boolq, convert_multiple_choice
-from jeff.sources.triage import convert_cvss, convert_help_desk, convert_it_support
+from yev.sources.intent import NONE_OPTION, convert_go_emotions, intent_converter
+from yev.sources.replay import convert_boolq, convert_multiple_choice
+from yev.sources.triage import convert_cvss, convert_help_desk, convert_it_support
 
 LABELS = [f"intent_{i}" for i in range(30)] + ["oos"]
 

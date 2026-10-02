@@ -30,7 +30,7 @@ def compare(cached, exact, body: dict) -> tuple[list[dict], float, float]:
     """Per-question rows {name, agree, argmax_cached, argmax_exact, max_diff} and the two wall times."""
     from pydantic import TypeAdapter
 
-    from jeff.serve.contract import QuestionSpec
+    from yev.serve.contract import QuestionSpec
     qs = TypeAdapter(dict[str, QuestionSpec]).validate_python(body["questions"])
     t0 = time.perf_counter()
     a, _ = cached.answer(body["state"], qs)
@@ -56,8 +56,8 @@ def main(argv=None) -> int:
     ap.add_argument("--batch-tokens", type=int, default=16384)
     args = ap.parse_args(argv)
 
-    from jeff.serve.engine import Engine
-    from jeff.train.infer import load
+    from yev.serve.engine import Engine
+    from yev.train.infer import load
     tok, model = load(args.model, args.base)
     kw = dict(model=model, tokenizer=tok, max_len=args.max_len, batch_tokens=args.batch_tokens)
     cached = Engine(args.model, args.base, args.calibration, prefix_cache=True, min_prefix_tokens=1, **kw)

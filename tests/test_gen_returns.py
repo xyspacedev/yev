@@ -2,8 +2,8 @@ import re
 from collections import defaultdict
 from datetime import datetime
 
-from jeff.generators.common import EDIT_TYPES, token_edit_size
-from jeff.generators.returns import ReturnCase, ReturnPolicy, generate, return_decision
+from yev.generators.common import EDIT_TYPES, token_edit_size
+from yev.generators.returns import ReturnCase, ReturnPolicy, generate, return_decision
 
 P = ReturnPolicy(window=30, grace=14, opened_ok=False)
 

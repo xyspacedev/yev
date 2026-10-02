@@ -7,13 +7,13 @@ pytest.importorskip("transformers")
 pytest.importorskip("pydantic")
 from pydantic import TypeAdapter  # noqa: E402
 
-import jeff.serve.engine as engine_mod  # noqa: E402
-from jeff.serve.contract import QuestionSpec  # noqa: E402
-from jeff.serve.engine import Engine  # noqa: E402
-from jeff.serve.mapping import to_rows  # noqa: E402
-from jeff.serve.prefix import common_prefix_len, prefix_letter_logits  # noqa: E402
-from jeff.train.data import letter_token_ids, prompt_ids  # noqa: E402
-from jeff.train.infer import letter_logits  # noqa: E402
+import yev.serve.engine as engine_mod  # noqa: E402
+from yev.serve.contract import QuestionSpec  # noqa: E402
+from yev.serve.engine import Engine  # noqa: E402
+from yev.serve.mapping import to_rows  # noqa: E402
+from yev.serve.prefix import common_prefix_len, prefix_letter_logits  # noqa: E402
+from yev.train.data import letter_token_ids, prompt_ids  # noqa: E402
+from yev.train.infer import letter_logits  # noqa: E402
 
 QS = TypeAdapter(dict[str, QuestionSpec])
 CHOICE = {"type": "choice", "instructions": "Which colour fits the long state best?",
@@ -152,7 +152,7 @@ def test_engine_exact_path_bit_identical(tok, tiny_model):
 
 
 def test_serve_cli_prefix_flags():
-    from jeff.cli import make_parser
+    from yev.cli import make_parser
     a = make_parser().parse_args(["serve", "--model", "m"])
     assert a.prefix_cache is True and a.min_prefix_tokens == 256
     a = make_parser().parse_args(["serve", "--model", "m", "--no-prefix-cache", "--min-prefix-tokens", "64"])

@@ -3,8 +3,8 @@ import random
 
 import pytest
 
-from jeff.format import LETTERS, SYSTEM_PROMPT, ExamplePool, ordered_options, render, signature
-from jeff.schema import Decision, Option
+from yev.format import LETTERS, SYSTEM_PROMPT, ExamplePool, ordered_options, render, signature
+from yev.schema import Decision, Option
 
 CHOICE = [Option("a", "Option a."), Option("b", "Option b."), Option("c", "Option c.")]
 

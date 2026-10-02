@@ -1,7 +1,7 @@
 import pytest
 
-from jeff import licences
-from jeff.sources.registry import SOURCES, by_name
+from yev import licences
+from yev.sources.registry import SOURCES, by_name
 
 
 def test_names_unique_and_all_sources_licence_clean():
@@ -25,7 +25,7 @@ def test_by_name_unknown_raises():
 def test_fetch_maps_classlabel_to_names():
     from itertools import islice
 
-    from jeff.sources.base import fetch
+    from yev.sources.base import fetch
 
     rows = list(islice(fetch(by_name("banking77")), 3))
     assert all(isinstance(r["label"], str) for r in rows)

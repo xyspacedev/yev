@@ -2,10 +2,10 @@
 # Run a command on the training box: run.sh [--bg [--log NAME]] <cmd...>
 # With --bg the command runs detached (nohup setsid) and ssh returns at once; it logs to ~/runs/<NAME>.log, where NAME is
 # --log, else the value after --config (e.g. lc25), else basename of the command plus a UTC timestamp.
-# Requires JEFF_TRAIN_HOST (user@host) and JEFF_TRAIN_KEY (path to ssh key).
+# Requires YEV_TRAIN_HOST (user@host) and YEV_TRAIN_KEY (path to ssh key).
 set -euo pipefail
-[ -n "${JEFF_TRAIN_HOST:-}" ] || { echo "JEFF_TRAIN_HOST is not set" >&2; exit 2; }
-[ -n "${JEFF_TRAIN_KEY:-}" ] || { echo "JEFF_TRAIN_KEY is not set" >&2; exit 2; }
+[ -n "${YEV_TRAIN_HOST:-}" ] || { echo "YEV_TRAIN_HOST is not set" >&2; exit 2; }
+[ -n "${YEV_TRAIN_KEY:-}" ] || { echo "YEV_TRAIN_KEY is not set" >&2; exit 2; }
 
 BG=0
 LOG=""
@@ -27,10 +27,10 @@ if [ -z "$LOG" ]; then
 fi
 [ -n "$LOG" ] || LOG="$(basename "$1")-$(date -u +%Y%m%dT%H%M%SZ)"
 
-SSH=(ssh -i "$JEFF_TRAIN_KEY")
+SSH=(ssh -i "$YEV_TRAIN_KEY")
 CMD="$(printf '%q ' "$@")"
 # \$HOME and \$PATH expand on the remote side.
-INNER="export PATH=\"\$HOME/venv/bin:\$PATH\" && cd ~/jeff && pip install -q -e '.[train]' --no-deps && $CMD"
+INNER="export PATH=\"\$HOME/venv/bin:\$PATH\" && cd ~/yev && pip install -q -e '.[train]' --no-deps && $CMD"
 
 if [ "$BG" = 1 ]; then
   # Only the job itself is backgrounded (not an "a && b &" list, whose subshell would keep ssh's
@@ -39,4 +39,4 @@ if [ "$BG" = 1 ]; then
 else
   REMOTE="bash -c $(printf %q "$INNER")"
 fi
-"${SSH[@]}" "$JEFF_TRAIN_HOST" "$REMOTE"
+"${SSH[@]}" "$YEV_TRAIN_HOST" "$REMOTE"

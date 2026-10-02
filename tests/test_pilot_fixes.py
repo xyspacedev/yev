@@ -1,6 +1,6 @@
-from jeff import cli
-from jeff.generators import returns
-from jeff.generators.llm.plan import plan_batches, render_writer_prompt
+from yev import cli
+from yev.generators import returns
+from yev.generators.llm.plan import plan_batches, render_writer_prompt
 
 
 def test_returns_template_avoids_benchmark_phrase():

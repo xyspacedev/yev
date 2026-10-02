@@ -1,7 +1,7 @@
 import random
 
-from jeff.sources.fast_decisions import FAST_DECISIONS_CONFIGS, convert_fast_decisions
-from jeff.sources.registry import SOURCES
+from yev.sources.fast_decisions import FAST_DECISIONS_CONFIGS, convert_fast_decisions
+from yev.sources.registry import SOURCES
 
 R = random.Random(0)
 INTENTS = [f"intent_{i}" for i in range(28)]

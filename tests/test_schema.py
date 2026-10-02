@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from jeff.schema import Decision, Option, SchemaError, read_jsonl, write_jsonl
+from yev.schema import Decision, Option, SchemaError, read_jsonl, write_jsonl
 
 
 def make(**overrides) -> Decision:

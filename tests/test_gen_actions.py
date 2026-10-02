@@ -1,7 +1,7 @@
 from collections import defaultdict
 
-from jeff.generators.actions import ActionCase, ActionPolicy, action_decision, generate
-from jeff.generators.common import token_edit_size
+from yev.generators.actions import ActionCase, ActionPolicy, action_decision, generate
+from yev.generators.common import token_edit_size
 
 P = ActionPolicy(limit=500)
 
@@ -69,7 +69,7 @@ def test_message_variants_within_edit_bound_exhaustively():
     from dataclasses import replace
     from itertools import product
 
-    from jeff.generators import actions as A
+    from yev.generators import actions as A
 
     base = ActionCase("message")
     variants = [replace(base, external=True), replace(base, external=True, sensitive=True),
@@ -83,7 +83,7 @@ def test_message_variants_within_edit_bound_exhaustively():
 def test_data_variants_within_edit_bound_exhaustively():
     from dataclasses import replace
 
-    from jeff.generators import actions as A
+    from yev.generators import actions as A
 
     base = ActionCase("data", env="production", op="update")
     variants = [replace(base, env="staging"), replace(base, op="read"), replace(base, op="delete"),
@@ -131,6 +131,6 @@ def test_action_decision_policy_flags():
 
 
 def test_sensitive_contents_say_customer():
-    from jeff.generators import actions as A
+    from yev.generators import actions as A
 
     assert all("customer" in s for s in A.SENSITIVE_CONTENTS)

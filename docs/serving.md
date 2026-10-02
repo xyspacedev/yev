@@ -1,13 +1,13 @@
 # Serving yev-4b behind `POST /v1/systemone`
 
-`jeff serve` loads one model and answers TypeSafe-style System One requests (Noul, Choice, Score) plus a minimal
+`yev serve` loads one model and answers TypeSafe-style System One requests (Noul, Choice, Score) plus a minimal
 OpenAI-style chat endpoint. The wire format follows `typesafe-sdk` 0.7.2; the details are in
 `tests/serve/fixtures/WIRE_FORMAT.md`. It needs the `serve` extra (`pip install -e '.[serve]'`) and a GPU for a real model.
 
 ## Running it
 
 ```bash
-jeff serve --model runs/yev-4b/adapter --base /models/Qwen3-4B-Base \
+yev serve --model runs/yev-4b/adapter --base /models/Qwen3-4B-Base \
            --calibration runs/yev-4b/calibration.json --model-name yev-4b
 ```
 
@@ -15,7 +15,7 @@ jeff serve --model runs/yev-4b/adapter --base /models/Qwen3-4B-Base \
 |---|---|---|
 | `--model` (required) | | LoRA adapter dir or full model dir |
 | `--base` | | Base model path; required for an adapter, and the tokenizer source |
-| `--calibration` | none (T = 1) | JSON from `jeff calibrate`: per-type temperatures applied to the letter logits |
+| `--calibration` | none (T = 1) | JSON from `yev calibrate`: per-type temperatures applied to the letter logits |
 | `--host` / `--port` | `127.0.0.1` / `8000` | Bind address |
 | `--model-name` | `yev-4b` | Name reported in responses and `/v1/models`. The `model` a client sends is ignored. |
 | `--max-len` | `16384` | A request with a longer prompt (in tokens) is refused with 422; prompts are never truncated |
@@ -136,7 +136,7 @@ count an error instead of an unsupported row.
 - **Noul** is always served yes-first (A = yes), so a client's `true`/`false` descriptions never reorder it.
 - **Speed:** a request's shared state is encoded once (prefix KV cache, above); each question then costs one forward pass
   over its own suffix. The cache lives for one request only: two requests with the same state each encode it.
-- **Calibration:** without `--calibration` temperatures are 1. Pass the file produced by `jeff calibrate` for the model.
+- **Calibration:** without `--calibration` temperatures are 1. Pass the file produced by `yev calibrate` for the model.
 
 ## Callers
 

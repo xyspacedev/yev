@@ -4,9 +4,9 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from jeff import cli
-from jeff.schema import read_jsonl
-from jeff.sources import skill_atlas as sa
+from yev import cli
+from yev.schema import read_jsonl
+from yev.sources import skill_atlas as sa
 
 LEAVES = {  # dept -> team -> leaves
     "eng": {"eng-a": ["leaf-a1", "leaf-a2", "leaf-a3"], "eng-b": ["leaf-b1", "leaf-b2", "leaf-b3"]},
@@ -224,7 +224,7 @@ def test_scope_capped_per_gold(tmp_path, monkeypatch):
 
 
 def test_build_then_filter_end_to_end(tmp_path, monkeypatch):
-    from jeff.filters.contamination import build_fingerprints
+    from yev.filters.contamination import build_fingerprints
 
     root = make_atlas(tmp_path / "atlas")
     raw, filtered = tmp_path / "raw", tmp_path / "filtered"
@@ -243,9 +243,9 @@ def test_build_then_filter_end_to_end(tmp_path, monkeypatch):
 
 
 def test_filter_writes_no_attribution_without_skill_atlas_rows(tmp_path, monkeypatch):
-    from jeff.filters.contamination import build_fingerprints
-    from jeff.schema import Decision, Option, write_jsonl as wj
-    from jeff.sources.base import SourceSpec
+    from yev.filters.contamination import build_fingerprints
+    from yev.schema import Decision, Option, write_jsonl as wj
+    from yev.sources.base import SourceSpec
 
     raw, out = tmp_path / "raw", tmp_path / "out"
     wj(raw / "toy.jsonl", [Decision(id="toy:1", type="noul", state="s", question="q?",
@@ -260,8 +260,8 @@ def test_filter_writes_no_attribution_without_skill_atlas_rows(tmp_path, monkeyp
 
 
 def test_local_source_licence_check_is_per_row(tmp_path):
-    from jeff.filters.pipeline import _licence_ok
-    from jeff.mix import is_allowed
+    from yev.filters.pipeline import _licence_ok
+    from yev.mix import is_allowed
 
     fams, _ = sa.build_all(make_atlas(tmp_path / "atlas"))
     for d in (d for ds in fams.values() for d in ds):

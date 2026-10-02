@@ -2,9 +2,9 @@ import random
 
 import pytest
 
-from jeff.licences import LicenceError
-from jeff.schema import Decision, Option
-from jeff.sources.base import (
+from yev.licences import LicenceError
+from yev.schema import Decision, Option
+from yev.sources.base import (
     MAX_STATE_CHARS,
     SourceSpec,
     build,
@@ -141,7 +141,7 @@ def test_fetch_passes_revision_and_data_files(monkeypatch):
         return FakeDS([{"x": 1}])
 
     monkeypatch.setattr(datasets, "load_dataset", fake_load_dataset)
-    from jeff.sources.base import fetch
+    from yev.sources.base import fetch
 
     s = spec(lambda *a: [], config="default", revision="refs/convert/parquet", data_files="train.jsonl")
     assert list(fetch(s)) == [{"x": 1}]

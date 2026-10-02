@@ -1,5 +1,5 @@
 import random
-from jeff.train.data import make_twin, letter_token_ids, encode, subsample_units, build_batches, encode_all
+from yev.train.data import make_twin, letter_token_ids, encode, subsample_units, build_batches, encode_all
 
 def test_letter_token_ids_single_and_distinct(tok):
     ids = letter_token_ids(tok)

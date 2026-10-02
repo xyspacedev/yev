@@ -1,5 +1,5 @@
 import math
-from jeff.train.targets import smooth_target
+from yev.train.targets import smooth_target
 
 def close(a, b): return all(math.isclose(a[k], b[k], abs_tol=1e-9) for k in a) and a.keys() == b.keys()
 

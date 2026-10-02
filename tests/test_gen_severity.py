@@ -1,7 +1,7 @@
 from collections import defaultdict
 
-from jeff.generators.common import EDIT_TYPES, token_edit_size
-from jeff.generators.severity import SCALE, SeverityCase, SeverityPolicy, generate, severity_decision
+from yev.generators.common import EDIT_TYPES, token_edit_size
+from yev.generators.severity import SCALE, SeverityCase, SeverityPolicy, generate, severity_decision
 
 P = SeverityPolicy(medium=10, high=100, critical=1000)
 

@@ -1,13 +1,13 @@
 import numpy as np
 
-from jeff.filters.contamination import (
+from yev.filters.contamination import (
     EmbeddingFilter,
     build_fingerprints,
     has_canary,
     normalize_tokens,
     overlaps,
 )
-from jeff.schema import Decision, Option
+from yev.schema import Decision, Option
 
 BENCH = [{
     "state": "Agent: billing-bot. Target: prod-primary. Proposed: refund $40 to the customer’s card — context: duplicate charge.",

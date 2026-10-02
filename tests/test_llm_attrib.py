@@ -1,6 +1,6 @@
-from jeff.generators.common import EDIT_TYPES, make_cluster
-from jeff.generators.llm.attrib import EDIT_TYPE_DEFINITIONS, prepare_pairs, render_attrib_prompt, score_attribution
-from jeff.schema import Option
+from yev.generators.common import EDIT_TYPES, make_cluster
+from yev.generators.llm.attrib import EDIT_TYPE_DEFINITIONS, prepare_pairs, render_attrib_prompt, score_attribution
+from yev.schema import Option
 
 OPTS = [Option("a", "Option a."), Option("b", "Option b.")]
 

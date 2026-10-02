@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from jeff.bench import decidebench as B
+from yev.bench import decidebench as B
 
 OPTS = [{"key": "approve", "description": "Approve it."}, {"key": "hold", "description": "Hold it."},
         {"key": "block", "description": "Block it."}]
@@ -92,11 +92,11 @@ def test_metrics_pairs_families_hard_and_reference():
     assert m["macro_f1"] == pytest.approx((1.0 + (1.0 + 0 + 0) / 3) / 2)
 
 
-SRC = Path(__file__).resolve().parents[2] / "src" / "jeff"
+SRC = Path(__file__).resolve().parents[2] / "src" / "yev"
 
 
 def test_only_bench_build_reads_the_test_set():
-    """load_test_raw is defined in jeff/decidebench.py and called only by jeff/bench/decidebench.py."""
+    """load_test_raw is defined in yev/decidebench.py and called only by yev/bench/decidebench.py."""
     callers = sorted(p.relative_to(SRC).as_posix() for p in SRC.rglob("*.py")
                      if re.search(r"\bload_test_raw\b", p.read_text(encoding="utf-8")))
     assert callers == ["bench/decidebench.py", "decidebench.py"]

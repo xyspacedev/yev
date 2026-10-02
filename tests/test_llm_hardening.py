@@ -2,13 +2,13 @@ import json
 
 import pytest
 
-from jeff.generators.common import EDIT_TYPE_DEFINITIONS, make_cluster
-from jeff.generators.llm.attrib import prepare_pairs, score_attribution
-from jeff.generators.llm.check import prepare_sheets, score_answers
-from jeff.generators.llm.families import DOMAINS
-from jeff.generators.llm.ingest import ingest_file, parse_cluster
-from jeff.generators.llm.plan import plan_batches, render_writer_prompt
-from jeff.schema import Option
+from yev.generators.common import EDIT_TYPE_DEFINITIONS, make_cluster
+from yev.generators.llm.attrib import prepare_pairs, score_attribution
+from yev.generators.llm.check import prepare_sheets, score_answers
+from yev.generators.llm.families import DOMAINS
+from yev.generators.llm.ingest import ingest_file, parse_cluster
+from yev.generators.llm.plan import plan_batches, render_writer_prompt
+from yev.schema import Option
 
 OPTS = [{"key": "approve", "description": "Approve if the claim is under $500 and has a receipt."},
         {"key": "partial", "description": "Pay half if the receipt is missing but the claim is under $500."},

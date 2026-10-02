@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from jeff.bench import dynabench_test, jevbench, rjudge, wildguardtest
-from jeff.bench import score as S
+from yev.bench import dynabench_test, jevbench, rjudge, wildguardtest
+from yev.bench import score as S
 
 
 def user(row):
@@ -114,7 +114,7 @@ DYNA = [
 
 
 def test_dynabench_reuses_training_converter():
-    from jeff.sources.moderation import DYNABENCH_OPTIONS, convert_dynabench
+    from yev.sources.moderation import DYNABENCH_OPTIONS, convert_dynabench
     import random
     rows, skipped = dynabench_test.convert(DYNA)
     assert skipped == 1 and len(rows) == 2

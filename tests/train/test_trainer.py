@@ -1,6 +1,6 @@
 import json
-from jeff.train.trainer import TrainConfig, train
-from jeff.train.infer import letter_logits
+from yev.train.trainer import TrainConfig, train
+from yev.train.infer import letter_logits
 
 def write_rows(path, make_row, n=24):
     with open(path, "w") as f:
@@ -85,8 +85,8 @@ def test_resume_starts_fresh_when_only_incomplete(tmp_path, tok, tiny_model, mak
 
 def test_perm_loss_with_mixed_option_counts(tmp_path, tok, tiny_model, make_row):
     import random, torch
-    from jeff.train.data import encode, make_twin, letter_token_ids
-    from jeff.train.trainer import _batch_loss
+    from yev.train.data import encode, make_twin, letter_token_ids
+    from yev.train.trainer import _batch_loss
     two = make_row("two", {"A": "x", "B": "y"}, "A")
     five = make_row("five", {"A": "p", "B": "q", "C": "r", "D": "s", "E": "t"}, "C")
     rows = [two, make_twin(two, random.Random(0)), five, make_twin(five, random.Random(0))]

@@ -8,7 +8,7 @@ def test_scripts_require_env_and_contain_no_host():
     for s in ("sync.sh", "run.sh"):
         p = Path("scripts/aws") / s
         r = subprocess.run(["bash", str(p), "echo"], env={"PATH": os.environ["PATH"]}, capture_output=True, text=True)
-        assert r.returncode == 2 and "JEFF_TRAIN_" in r.stderr
+        assert r.returncode == 2 and "YEV_TRAIN_" in r.stderr
     for p in Path("scripts/aws").glob("*.sh"):
         t = p.read_text().replace("127.0.0.1", "")  # loopback is the server address, not a host
         assert not re.search(r"\b\d{1,3}(\.\d{1,3}){3}\b", t) and ".pem" not in t
@@ -16,16 +16,16 @@ def test_scripts_require_env_and_contain_no_host():
 
 def test_scripts_require_key_when_host_set():
     for s in ("sync.sh", "run.sh"):
-        env = {"PATH": os.environ["PATH"], "JEFF_TRAIN_HOST": "u@h"}
+        env = {"PATH": os.environ["PATH"], "YEV_TRAIN_HOST": "u@h"}
         r = subprocess.run(["bash", str(Path("scripts/aws") / s), "echo"], env=env, capture_output=True, text=True)
-        assert r.returncode == 2 and "JEFF_TRAIN_KEY" in r.stderr
+        assert r.returncode == 2 and "YEV_TRAIN_KEY" in r.stderr
 
 
 def _fake_env(tmp_path):
     home = tmp_path / "home"
     (home / "venv/bin").mkdir(parents=True)
-    (home / "jeff").mkdir()
-    for name, body in (("pip", "exit 0"), ("jeff", 'printf "%s\\n" "$@" > "$HOME/jeff_args"')):
+    (home / "yev").mkdir()
+    for name, body in (("pip", "exit 0"), ("yev", 'printf "%s\\n" "$@" > "$HOME/yev_args"')):
         f = home / "venv/bin" / name
         f.write_text("#!/bin/sh\n" + body + "\n")
         f.chmod(0o755)
@@ -43,8 +43,8 @@ def _fake_env(tmp_path):
     setsid.chmod(0o755)
     env = {
         "PATH": f"{bindir}:{os.environ['PATH']}",
-        "JEFF_TRAIN_HOST": "u@h",
-        "JEFF_TRAIN_KEY": "/k/key",
+        "YEV_TRAIN_HOST": "u@h",
+        "YEV_TRAIN_KEY": "/k/key",
         "FAKE_SSH_ARGS": str(tmp_path / "ssh_args"),
         "FAKE_HOME": str(home),
     }
@@ -56,14 +56,14 @@ def test_run_bg_remote_command_and_quoting(tmp_path):
 
     home, env = _fake_env(tmp_path)
     r = subprocess.run(
-        ["bash", "scripts/aws/run.sh", "--bg", "jeff", "train", "--config", "configs/stage0/lc25.json", "--x", '$HOME "q" `b` \\'],
+        ["bash", "scripts/aws/run.sh", "--bg", "yev", "train", "--config", "configs/stage0/lc25.json", "--x", '$HOME "q" `b` \\'],
         env=env, capture_output=True, text=True, timeout=30,
     )
     assert r.returncode == 0, r.stderr
     remote = (tmp_path / "ssh_args").read_text()
     assert "lc25.log" in remote and "venv/bin" in remote and "/dev/null" in remote
     assert "nohup setsid bash -c" in remote and "&& nohup" not in remote
-    out = home / "jeff_args"
+    out = home / "yev_args"
     for _ in range(50):
         if out.exists() and out.read_text().count("\n") >= 6:
             break
@@ -74,15 +74,15 @@ def test_run_bg_remote_command_and_quoting(tmp_path):
 
 def test_run_bg_explicit_log_name(tmp_path):
     _, env = _fake_env(tmp_path)
-    subprocess.run(["bash", "scripts/aws/run.sh", "--bg", "--log", "mine", "jeff", "eval"], env=env, timeout=30)
+    subprocess.run(["bash", "scripts/aws/run.sh", "--bg", "--log", "mine", "yev", "eval"], env=env, timeout=30)
     assert "mine.log" in (tmp_path / "ssh_args").read_text()
 
 
 def test_run_foreground_args_unmangled(tmp_path):
     home, env = _fake_env(tmp_path)
-    r = subprocess.run(["bash", "scripts/aws/run.sh", "jeff", "a b", "$HOME"], env=env, capture_output=True, text=True, timeout=30)
+    r = subprocess.run(["bash", "scripts/aws/run.sh", "yev", "a b", "$HOME"], env=env, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
-    assert (home / "jeff_args").read_text().splitlines() == ["a b", "$HOME"]
+    assert (home / "yev_args").read_text().splitlines() == ["a b", "$HOME"]
 
 
 def test_run_bg_returns_before_job_finishes(tmp_path):
@@ -127,17 +127,17 @@ def test_sync_records_git_sha_on_box(tmp_path):
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
     r = subprocess.run(["bash", "scripts/aws/sync.sh"], cwd=repo, env=genv, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
-    assert (home / "jeff/GIT_SHA").read_text() == head + "\n"
+    assert (home / "yev/GIT_SHA").read_text() == head + "\n"
     (repo / "dirty.txt").write_text("x")  # untracked file makes the tree dirty
     r = subprocess.run(["bash", "scripts/aws/sync.sh"], cwd=repo, env=genv, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
-    assert (home / "jeff/GIT_SHA").read_text() == head + "-dirty\n"
+    assert (home / "yev/GIT_SHA").read_text() == head + "-dirty\n"
 
 
 def _we_env(tmp_path, health_ok=True, fail_wf=None):
     home = tmp_path / "home"
-    (home / "jeff").mkdir(parents=True)
-    (home / "jeff/GIT_SHA").write_text("abc123-dirty\n")
+    (home / "yev").mkdir(parents=True)
+    (home / "yev/GIT_SHA").write_text("abc123-dirty\n")
     we = tmp_path / "we"
     we.mkdir()
     runner = tmp_path / "fakerunner"
@@ -178,7 +178,7 @@ def test_workflowevals_runs_four_workflows_and_collects(tmp_path):
         assert json.loads((out / wf / "scores.json").read_text()) == {"wf": wf}
         assert (out / wf / "results.json").exists()
     meta = json.loads((out / "run_meta.json").read_text())
-    assert meta["jeff_git_sha"] == "abc123-dirty"
+    assert meta["yev_git_sha"] == "abc123-dirty"
     assert meta["workflowevals_commit"] == "unknown"  # the fake WE_DIR is not a git checkout
     assert list(meta["workflows"]) == WF4
     assert all(isinstance(v["wall_clock_s"], int) and v["exit_code"] == 0 for v in meta["workflows"].values())
@@ -205,4 +205,4 @@ def test_workflowevals_continues_after_a_failed_workflow(tmp_path):
 def test_workflowevals_pins_commit_and_has_no_host():
     t = Path("scripts/aws/workflowevals.sh").read_text()
     assert re.search(r"WE_COMMIT:-[0-9a-f]{40}\}", t)
-    assert "JEFF_TRAIN" not in t  # runs on the box; needs no laptop-side env
+    assert "YEV_TRAIN" not in t  # runs on the box; needs no laptop-side env

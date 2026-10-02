@@ -1,4 +1,4 @@
-# jeff-4b Plan 2a: Synthetic Pipeline and Pilot — Implementation Plan
+# yev-4b Plan 2a: Synthetic Pipeline and Pilot — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -13,21 +13,21 @@ Then run a 200-cluster pilot to measure survival and cost before scaling up in P
 - The LLM pipeline is file-based. Python writes batch specs and rendered prompts. The **controller session** dispatches Opus subagents that write JSONL to named paths. Python then validates, prepares blind answer sheets, scores the answers, and prepares and scores edit attribution.
 - No API client is used. "Opus 5.5 on the user's subscription" means subagents dispatched with `model: "opus"` from this session.
 
-**Tech Stack:** Python ≥ 3.11, `uv`, the existing `jeff` package (Plan 1), stdlib only (`difflib`, `hashlib`, `random`, `datetime`), `pytest`.
+**Tech Stack:** Python ≥ 3.11, `uv`, the existing `yev` package (Plan 1), stdlib only (`difflib`, `hashlib`, `random`, `datetime`), `pytest`.
 
-**Spec:** `docs/superpowers/specs/2026-09-29-jeff-4b-system-one-design.md` (§4.3 synthetic data; §2 hard rules).
+**Spec:** `docs/superpowers/specs/2026-09-29-yev-4b-system-one-design.md` (§4.3 synthetic data; §2 hard rules).
 Plan 1's outcome and carry-over notes are at the end of `docs/superpowers/plans/2026-09-29-plan-1-data-foundation.md`.
 
 ## Global Constraints
 
 **DecideBench**
 - DecideBench is never read by any generator or subagent.
-- Synthetic rows go through the same `jeff filter` (canary, 8-gram, embedding, dedupe) as public rows.
+- Synthetic rows go through the same `yev filter` (canary, 8-gram, embedding, dedupe) as public rows.
 
 **Record format**
 - Every synthetic row is a `Decision` with a non-null `cluster_id` and an `edit_type`: `None` for a cluster's base member, otherwise one of `EDIT_TYPES`.
 - Every synthetic row has `source` `synthetic_rules` or `synthetic_opus` and `licence` `cc-by-4.0`.
-- Both sources are registered specs, so `jeff filter` accepts them.
+- Both sources are registered specs, so `yev filter` accepts them.
 - `EDIT_TYPES = ("negation", "threshold", "date", "entity_swap", "quantifier", "exception", "unit", "policy_edit", "injection")`.
 
 **Cluster rules**
@@ -69,7 +69,7 @@ Plan 1's outcome and carry-over notes are at the end of `docs/superpowers/plans/
 ## File Structure
 
 ```
-src/jeff/generators/
+src/yev/generators/
   __init__.py
   common.py            # EDIT_TYPES, SYNTH_LICENCE, token_edit_size, make_cluster, keep_valid_clusters
   specs.py             # SYNTHETIC_SPECS (registered sources for the filter)
@@ -83,7 +83,7 @@ src/jeff/generators/
     ingest.py          # parse_cluster, ingest_file
     check.py           # prepare_sheets, render_checker_prompt, score_answers
     attrib.py          # EDIT_TYPE_DEFINITIONS, prepare_pairs, render_attrib_prompt, score_attribution
-src/jeff/cli.py        # + gen-rules, synth {plan,ingest,check-prepare,check-score,attrib-prepare,attrib-score}
+src/yev/cli.py        # + gen-rules, synth {plan,ingest,check-prepare,check-score,attrib-prepare,attrib-score}
 tests/
   test_gen_common.py test_gen_returns.py test_gen_actions.py test_gen_severity.py
   test_llm_plan.py test_llm_ingest.py test_llm_check.py test_llm_attrib.py test_cli_synth.py
@@ -94,8 +94,8 @@ tests/
 ### Task 1: Shared generator helpers and synthetic source specs
 
 **Files:**
-- Create: `src/jeff/generators/__init__.py` (empty), `src/jeff/generators/common.py`, `src/jeff/generators/specs.py`
-- Modify: `src/jeff/cli.py`. In `cmd_filter`, the specs mapping passed to `run_filters` must also include `SYNTHETIC_SPECS`.
+- Create: `src/yev/generators/__init__.py` (empty), `src/yev/generators/common.py`, `src/yev/generators/specs.py`
+- Modify: `src/yev/cli.py`. In `cmd_filter`, the specs mapping passed to `run_filters` must also include `SYNTHETIC_SPECS`.
 - Test: `tests/test_gen_common.py`
 
 **Interfaces:**
@@ -112,16 +112,16 @@ tests/
 `tests/test_gen_common.py`:
 
 ```python
-from jeff import licences
-from jeff.generators.common import (
+from yev import licences
+from yev.generators.common import (
     EDIT_TYPES,
     SYNTH_LICENCE,
     keep_valid_clusters,
     make_cluster,
     token_edit_size,
 )
-from jeff.generators.specs import SYNTHETIC_SPECS
-from jeff.schema import Option
+from yev.generators.specs import SYNTHETIC_SPECS
+from yev.schema import Option
 
 OPTS = [Option("allow", "Allow it."), Option("deny", "Deny it.")]
 
@@ -167,11 +167,11 @@ def test_edit_types_and_specs_are_licence_clean():
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_gen_common.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'jeff.generators'`.
+Expected: FAIL with `ModuleNotFoundError: No module named 'yev.generators'`.
 
 - [ ] **Step 3: Write the implementation**
 
-`src/jeff/generators/common.py`:
+`src/yev/generators/common.py`:
 
 ```python
 """Shared helpers for synthetic cluster generators (spec §4.3)."""
@@ -182,7 +182,7 @@ import difflib
 import re
 from collections import defaultdict
 
-from jeff.schema import Decision, Option
+from yev.schema import Decision, Option
 
 EDIT_TYPES = (
     "negation", "threshold", "date", "entity_swap", "quantifier",
@@ -243,15 +243,15 @@ def keep_valid_clusters(decisions: list[Decision]) -> list[Decision]:
     return [d for d in decisions if d.cluster_id is not None and len(golds[d.cluster_id]) >= 2]
 ```
 
-`src/jeff/generators/specs.py`:
+`src/yev/generators/specs.py`:
 
 ```python
-"""Registered specs for our own synthetic sources, so `jeff filter` accepts their rows."""
+"""Registered specs for our own synthetic sources, so `yev filter` accepts their rows."""
 
 from __future__ import annotations
 
-from jeff.generators.common import SYNTH_LICENCE
-from jeff.sources.base import SourceSpec
+from yev.generators.common import SYNTH_LICENCE
+from yev.sources.base import SourceSpec
 
 
 def _not_downloaded(row, i, rng, labels):
@@ -259,13 +259,13 @@ def _not_downloaded(row, i, rng, labels):
 
 
 SYNTHETIC_SPECS = [
-    SourceSpec("synthetic_rules", "jeff/synthetic", "rules", "train", SYNTH_LICENCE, _not_downloaded, 0),
-    SourceSpec("synthetic_opus", "jeff/synthetic", "opus", "train", SYNTH_LICENCE, _not_downloaded, 0),
+    SourceSpec("synthetic_rules", "yev/synthetic", "rules", "train", SYNTH_LICENCE, _not_downloaded, 0),
+    SourceSpec("synthetic_opus", "yev/synthetic", "opus", "train", SYNTH_LICENCE, _not_downloaded, 0),
 ]
 ```
 
-In `src/jeff/cli.py`:
-- Add `from jeff.generators.specs import SYNTHETIC_SPECS`.
+In `src/yev/cli.py`:
+- Add `from yev.generators.specs import SYNTHETIC_SPECS`.
 - In `cmd_filter`, change the expression that builds the name→spec mapping from registry `SOURCES` so that it covers both lists: `{s.name: s for s in [*SOURCES, *SYNTHETIC_SPECS]}`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -276,7 +276,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/jeff/generators src/jeff/cli.py tests/test_gen_common.py
+git add src/yev/generators src/yev/cli.py tests/test_gen_common.py
 git commit -m "feat: add synthetic generator helpers and source specs"
 ```
 
@@ -285,7 +285,7 @@ git commit -m "feat: add synthetic generator helpers and source specs"
 ### Task 2: Rule-based returns-policy clusters
 
 **Files:**
-- Create: `src/jeff/generators/returns.py`
+- Create: `src/yev/generators/returns.py`
 - Test: `tests/test_gen_returns.py`
 
 **Interfaces:**
@@ -308,8 +308,8 @@ import re
 from collections import defaultdict
 from datetime import datetime
 
-from jeff.generators.common import EDIT_TYPES, token_edit_size
-from jeff.generators.returns import ReturnCase, ReturnPolicy, generate, return_decision
+from yev.generators.common import EDIT_TYPES, token_edit_size
+from yev.generators.returns import ReturnCase, ReturnPolicy, generate, return_decision
 
 P = ReturnPolicy(window=30, grace=14, opened_ok=False)
 
@@ -368,7 +368,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 
 - [ ] **Step 3: Write the implementation**
 
-`src/jeff/generators/returns.py`:
+`src/yev/generators/returns.py`:
 
 ```python
 """Rule-based returns-policy clusters: labels are computed, values sit on the boundaries."""
@@ -379,8 +379,8 @@ import random
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
 
-from jeff.generators.common import make_cluster
-from jeff.schema import Decision, Option
+from yev.generators.common import make_cluster
+from yev.schema import Decision, Option
 
 SOURCE = "synthetic_rules"
 FAMILY = "returns_policy"
@@ -482,7 +482,7 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/jeff/generators/returns.py tests/test_gen_returns.py
+git add src/yev/generators/returns.py tests/test_gen_returns.py
 git commit -m "feat: add rule-based returns-policy clusters"
 ```
 
@@ -491,7 +491,7 @@ git commit -m "feat: add rule-based returns-policy clusters"
 ### Task 3: Rule-based agent-action clusters
 
 **Files:**
-- Create: `src/jeff/generators/actions.py`
+- Create: `src/yev/generators/actions.py`
 - Test: `tests/test_gen_actions.py`
 
 **Interfaces:**
@@ -510,8 +510,8 @@ Keys are `allow`, `escalate` and `deny`, deliberately different from DecideBench
 ```python
 from collections import defaultdict
 
-from jeff.generators.actions import ActionCase, ActionPolicy, action_decision, generate
-from jeff.generators.common import token_edit_size
+from yev.generators.actions import ActionCase, ActionPolicy, action_decision, generate
+from yev.generators.common import token_edit_size
 
 P = ActionPolicy(limit=500)
 
@@ -556,7 +556,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 
 - [ ] **Step 3: Write the implementation**
 
-`src/jeff/generators/actions.py`:
+`src/yev/generators/actions.py`:
 
 ```python
 """Rule-based agent-action clusters (data changes, payments, outbound messages)."""
@@ -566,8 +566,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, replace
 
-from jeff.generators.common import make_cluster
-from jeff.schema import Decision, Option
+from yev.generators.common import make_cluster
+from yev.schema import Decision, Option
 
 SOURCE = "synthetic_rules"
 FAMILY = "action_review"
@@ -682,7 +682,7 @@ Expected: 2 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/jeff/generators/actions.py tests/test_gen_actions.py
+git add src/yev/generators/actions.py tests/test_gen_actions.py
 git commit -m "feat: add rule-based agent-action clusters"
 ```
 
@@ -691,7 +691,7 @@ git commit -m "feat: add rule-based agent-action clusters"
 ### Task 4: Rule-based bug-severity clusters (Score)
 
 **Files:**
-- Create: `src/jeff/generators/severity.py`
+- Create: `src/yev/generators/severity.py`
 - Test: `tests/test_gen_severity.py`
 
 **Interfaces:**
@@ -715,8 +715,8 @@ Rules:
 ```python
 from collections import defaultdict
 
-from jeff.generators.common import token_edit_size
-from jeff.generators.severity import SCALE, SeverityCase, SeverityPolicy, generate, severity_decision
+from yev.generators.common import token_edit_size
+from yev.generators.severity import SCALE, SeverityCase, SeverityPolicy, generate, severity_decision
 
 P = SeverityPolicy(medium=10, high=100, critical=1000)
 
@@ -753,7 +753,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 
 - [ ] **Step 3: Write the implementation**
 
-`src/jeff/generators/severity.py`:
+`src/yev/generators/severity.py`:
 
 ```python
 """Rule-based bug-severity clusters on an ordered four-point scale."""
@@ -763,8 +763,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, replace
 
-from jeff.generators.common import make_cluster
-from jeff.schema import Decision, Option
+from yev.generators.common import make_cluster
+from yev.schema import Decision, Option
 
 SOURCE = "synthetic_rules"
 FAMILY = "triage"
@@ -854,7 +854,7 @@ Expected: 2 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/jeff/generators/severity.py tests/test_gen_severity.py
+git add src/yev/generators/severity.py tests/test_gen_severity.py
 git commit -m "feat: add rule-based bug-severity clusters"
 ```
 
@@ -863,20 +863,20 @@ git commit -m "feat: add rule-based bug-severity clusters"
 ### Task 5: `gen-rules` command
 
 **Files:**
-- Modify: `src/jeff/cli.py`
+- Modify: `src/yev/cli.py`
 - Test: `tests/test_cli_synth.py`
 
 **Interfaces:**
 - Consumes: `returns.generate`, `actions.generate`, `severity.generate`, `write_jsonl`.
-- Produces: `jeff gen-rules --family {returns,actions,severity} --clusters N --seed S --out FILE`. It writes the rows, prints the row and cluster counts, and returns 0.
+- Produces: `yev gen-rules --family {returns,actions,severity} --clusters N --seed S --out FILE`. It writes the rows, prints the row and cluster counts, and returns 0.
 
 - [ ] **Step 1: Write the failing test**
 
 `tests/test_cli_synth.py`:
 
 ```python
-from jeff import cli
-from jeff.schema import read_jsonl
+from yev import cli
+from yev.schema import read_jsonl
 
 
 def test_gen_rules_writes_valid_clusters(tmp_path):
@@ -901,10 +901,10 @@ Expected: FAIL with `SystemExit: 2` / `invalid choice: 'gen-rules'`.
 
 - [ ] **Step 3: Write the implementation**
 
-In `src/jeff/cli.py`, add the imports:
+In `src/yev/cli.py`, add the imports:
 
 ```python
-from jeff.generators import actions, returns, severity
+from yev.generators import actions, returns, severity
 ```
 
 Add this command function:
@@ -939,7 +939,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/jeff/cli.py tests/test_cli_synth.py
+git add src/yev/cli.py tests/test_cli_synth.py
 git commit -m "feat: add gen-rules command"
 ```
 
@@ -948,7 +948,7 @@ git commit -m "feat: add gen-rules command"
 ### Task 6: LLM families, domains and batch planning with writer prompts
 
 **Files:**
-- Create: `src/jeff/generators/llm/__init__.py` (empty), `src/jeff/generators/llm/families.py`, `src/jeff/generators/llm/plan.py`
+- Create: `src/yev/generators/llm/__init__.py` (empty), `src/yev/generators/llm/families.py`, `src/yev/generators/llm/plan.py`
 - Test: `tests/test_llm_plan.py`
 
 **Interfaces:**
@@ -967,9 +967,9 @@ The prompt is what the controller hands to a writer subagent. It fixes the JSON 
 ```python
 from collections import Counter
 
-from jeff.generators.common import EDIT_TYPES
-from jeff.generators.llm.families import DOMAINS, FAMILIES
-from jeff.generators.llm.plan import plan_batches, render_writer_prompt
+from yev.generators.common import EDIT_TYPES
+from yev.generators.llm.families import DOMAINS, FAMILIES
+from yev.generators.llm.plan import plan_batches, render_writer_prompt
 
 
 def test_plan_covers_families_evenly_and_is_deterministic():
@@ -1007,7 +1007,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 
 - [ ] **Step 3: Write the implementation**
 
-`src/jeff/generators/llm/families.py`:
+`src/yev/generators/llm/families.py`:
 
 ```python
 """What the Opus writers generate: families (spec §4.1) and the domains they are set in."""
@@ -1045,7 +1045,7 @@ DOMAINS: tuple[str, ...] = (
 )
 ```
 
-`src/jeff/generators/llm/plan.py`:
+`src/yev/generators/llm/plan.py`:
 
 ```python
 """Batch specs and writer prompts for Opus writer subagents."""
@@ -1055,8 +1055,8 @@ from __future__ import annotations
 import json
 import random
 
-from jeff.generators.common import EDIT_TYPES, MAX_EDIT_TOKENS
-from jeff.generators.llm.families import DOMAINS, FAMILIES
+from yev.generators.common import EDIT_TYPES, MAX_EDIT_TOKENS
+from yev.generators.llm.families import DOMAINS, FAMILIES
 
 STATE_EDIT_TYPES = [e for e in EDIT_TYPES if e not in ("policy_edit", "injection")]
 
@@ -1174,7 +1174,7 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/jeff/generators/llm tests/test_llm_plan.py
+git add src/yev/generators/llm tests/test_llm_plan.py
 git commit -m "feat: add LLM batch planning and writer prompts"
 ```
 
@@ -1183,7 +1183,7 @@ git commit -m "feat: add LLM batch planning and writer prompts"
 ### Task 7: Ingest and validate writer output
 
 **Files:**
-- Create: `src/jeff/generators/llm/ingest.py`
+- Create: `src/yev/generators/llm/ingest.py`
 - Test: `tests/test_llm_ingest.py`
 
 **Interfaces:**
@@ -1213,7 +1213,7 @@ What gets dropped, and why:
 ```python
 import json
 
-from jeff.generators.llm.ingest import ingest_file, parse_cluster
+from yev.generators.llm.ingest import ingest_file, parse_cluster
 
 OPTS = [{"key": "approve", "description": "Approve if the claim is under $500 and has a receipt."},
         {"key": "partial", "description": "Pay half if the receipt is missing but the claim is under $500."},
@@ -1297,7 +1297,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 
 - [ ] **Step 3: Write the implementation**
 
-`src/jeff/generators/llm/ingest.py`:
+`src/yev/generators/llm/ingest.py`:
 
 ```python
 """Parse and validate Opus writer output (one cluster per JSON line)."""
@@ -1308,8 +1308,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from jeff.generators.common import EDIT_TYPES, MAX_EDIT_TOKENS, make_cluster, token_edit_size
-from jeff.schema import Decision, Option, SchemaError
+from yev.generators.common import EDIT_TYPES, MAX_EDIT_TOKENS, make_cluster, token_edit_size
+from yev.schema import Decision, Option, SchemaError
 
 SOURCE = "synthetic_opus"
 
@@ -1401,7 +1401,7 @@ Expected: 5 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/jeff/generators/llm/ingest.py tests/test_llm_ingest.py
+git add src/yev/generators/llm/ingest.py tests/test_llm_ingest.py
 git commit -m "feat: ingest and validate Opus writer output"
 ```
 
@@ -1410,7 +1410,7 @@ git commit -m "feat: ingest and validate Opus writer output"
 ### Task 8: Blind-check sheets, checker prompt and scoring with soft labels
 
 **Files:**
-- Create: `src/jeff/generators/llm/check.py`
+- Create: `src/yev/generators/llm/check.py`
 - Test: `tests/test_llm_check.py`
 
 **Interfaces:**
@@ -1437,9 +1437,9 @@ git commit -m "feat: ingest and validate Opus writer output"
 ```python
 import pytest
 
-from jeff.generators.common import make_cluster
-from jeff.generators.llm.check import prepare_sheets, render_checker_prompt, score_answers
-from jeff.schema import Option
+from yev.generators.common import make_cluster
+from yev.generators.llm.check import prepare_sheets, render_checker_prompt, score_answers
+from yev.schema import Option
 
 CHOICE = [Option("a", "Option a."), Option("b", "Option b."), Option("c", "Option c.")]
 SCALE = [Option("low", "Low."), Option("mid", "Mid."), Option("high", "High.")]
@@ -1549,7 +1549,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 
 - [ ] **Step 3: Write the implementation**
 
-`src/jeff/generators/llm/check.py`:
+`src/yev/generators/llm/check.py`:
 
 ```python
 """Blind checking: answer sheets without golds, three independent checkers, majority vote, soft labels."""
@@ -1561,8 +1561,8 @@ import random
 from collections import Counter, defaultdict
 from dataclasses import replace
 
-from jeff.generators.common import keep_valid_clusters
-from jeff.schema import Decision
+from yev.generators.common import keep_valid_clusters
+from yev.schema import Decision
 
 LETTERS = "ABCDEF"
 
@@ -1659,7 +1659,7 @@ Expected: 6 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/jeff/generators/llm/check.py tests/test_llm_check.py
+git add src/yev/generators/llm/check.py tests/test_llm_check.py
 git commit -m "feat: add blind-check sheets, checker prompt and vote scoring"
 ```
 
@@ -1668,7 +1668,7 @@ git commit -m "feat: add blind-check sheets, checker prompt and vote scoring"
 ### Task 9: Edit attribution
 
 **Files:**
-- Create: `src/jeff/generators/llm/attrib.py`
+- Create: `src/yev/generators/llm/attrib.py`
 - Test: `tests/test_llm_attrib.py`
 
 **Interfaces:**
@@ -1692,9 +1692,9 @@ git commit -m "feat: add blind-check sheets, checker prompt and vote scoring"
 `tests/test_llm_attrib.py`:
 
 ```python
-from jeff.generators.common import EDIT_TYPES, make_cluster
-from jeff.generators.llm.attrib import EDIT_TYPE_DEFINITIONS, prepare_pairs, render_attrib_prompt, score_attribution
-from jeff.schema import Option
+from yev.generators.common import EDIT_TYPES, make_cluster
+from yev.generators.llm.attrib import EDIT_TYPE_DEFINITIONS, prepare_pairs, render_attrib_prompt, score_attribution
+from yev.schema import Option
 
 OPTS = [Option("a", "Option a."), Option("b", "Option b.")]
 
@@ -1744,7 +1744,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 
 - [ ] **Step 3: Write the implementation**
 
-`src/jeff/generators/llm/attrib.py`:
+`src/yev/generators/llm/attrib.py`:
 
 ```python
 """Edit attribution: a fresh checker names the edit between base and variant; mismatches are dropped."""
@@ -1754,8 +1754,8 @@ from __future__ import annotations
 import hashlib
 from collections import Counter, defaultdict
 
-from jeff.generators.common import keep_valid_clusters
-from jeff.schema import Decision
+from yev.generators.common import keep_valid_clusters
+from yev.schema import Decision
 
 EDIT_TYPE_DEFINITIONS = {
     "negation": "something is made true/false: 'is' vs 'is not', 'lost' vs 'kept', 'has' vs 'lacks'",
@@ -1846,7 +1846,7 @@ Expected: 4 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/jeff/generators/llm/attrib.py tests/test_llm_attrib.py
+git add src/yev/generators/llm/attrib.py tests/test_llm_attrib.py
 git commit -m "feat: add edit attribution for synthetic clusters"
 ```
 
@@ -1855,7 +1855,7 @@ git commit -m "feat: add edit attribution for synthetic clusters"
 ### Task 10: `synth` commands
 
 **Files:**
-- Modify: `src/jeff/cli.py`
+- Modify: `src/yev/cli.py`
 - Test: append to `tests/test_cli_synth.py`
 
 **Interfaces:**
@@ -1864,12 +1864,12 @@ git commit -m "feat: add edit attribution for synthetic clusters"
 
 | Command | Writes |
 |---|---|
-| `jeff synth plan --dir DIR --clusters N --per-batch K --seed S` | `DIR/batches/<batch_id>.json` and `DIR/batches/<batch_id>.prompt.md` (output path `DIR/written/<batch_id>.jsonl`) |
-| `jeff synth ingest --dir DIR` | `DIR/ingested.jsonl`, `DIR/reports/ingest.json`. Batches with no written file are counted as `missing_file`. |
-| `jeff synth check-prepare --dir DIR [--sheets 3] [--part-size 100]` | `DIR/check/<part>.jsonl` and `DIR/check/<part>.prompt.md` (answers path `DIR/check/answers-<part>.jsonl`); `DIR/private/check-key.json` |
-| `jeff synth check-score --dir DIR` | reads every `DIR/check/answers-*.jsonl`; writes `DIR/checked.jsonl`, `DIR/reports/check.json` |
-| `jeff synth attrib-prepare --dir DIR [--part-size 100]` | `DIR/attrib/<part>.jsonl` and `.prompt.md` (answers path `DIR/attrib/answers-<part>.jsonl`); `DIR/private/attrib-key.json` |
-| `jeff synth attrib-score --dir DIR` | `DIR/final/synthetic_opus.jsonl`, `DIR/reports/attrib.json`, `DIR/reports/pilot.json` |
+| `yev synth plan --dir DIR --clusters N --per-batch K --seed S` | `DIR/batches/<batch_id>.json` and `DIR/batches/<batch_id>.prompt.md` (output path `DIR/written/<batch_id>.jsonl`) |
+| `yev synth ingest --dir DIR` | `DIR/ingested.jsonl`, `DIR/reports/ingest.json`. Batches with no written file are counted as `missing_file`. |
+| `yev synth check-prepare --dir DIR [--sheets 3] [--part-size 100]` | `DIR/check/<part>.jsonl` and `DIR/check/<part>.prompt.md` (answers path `DIR/check/answers-<part>.jsonl`); `DIR/private/check-key.json` |
+| `yev synth check-score --dir DIR` | reads every `DIR/check/answers-*.jsonl`; writes `DIR/checked.jsonl`, `DIR/reports/check.json` |
+| `yev synth attrib-prepare --dir DIR [--part-size 100]` | `DIR/attrib/<part>.jsonl` and `.prompt.md` (answers path `DIR/attrib/answers-<part>.jsonl`); `DIR/private/attrib-key.json` |
+| `yev synth attrib-score --dir DIR` | `DIR/final/synthetic_opus.jsonl`, `DIR/reports/attrib.json`, `DIR/reports/pilot.json` |
 
 `DIR/reports/pilot.json` holds:
 - the count at each stage: planned clusters, ingested clusters and rows, checked, final;
@@ -1943,15 +1943,15 @@ Expected: FAIL with `invalid choice: 'synth'`.
 
 - [ ] **Step 3: Write the implementation**
 
-In `src/jeff/cli.py`, add imports:
+In `src/yev/cli.py`, add imports:
 
 ```python
 from collections import Counter
 
-from jeff.generators.llm.attrib import prepare_pairs, render_attrib_prompt, score_attribution
-from jeff.generators.llm.check import prepare_sheets, render_checker_prompt, score_answers
-from jeff.generators.llm.ingest import ingest_file
-from jeff.generators.llm.plan import plan_batches, render_writer_prompt
+from yev.generators.llm.attrib import prepare_pairs, render_attrib_prompt, score_attribution
+from yev.generators.llm.check import prepare_sheets, render_checker_prompt, score_answers
+from yev.generators.llm.ingest import ingest_file
+from yev.generators.llm.plan import plan_batches, render_writer_prompt
 ```
 
 Add these helpers and commands. `_write_json` writes pretty JSON through the existing atomic JSON helper in `cli.py`; use that helper's name.
@@ -2117,7 +2117,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/jeff/cli.py tests/test_cli_synth.py
+git add src/yev/cli.py tests/test_cli_synth.py
 git commit -m "feat: add synth commands for the Opus-subagent pipeline"
 ```
 
@@ -2130,16 +2130,16 @@ The **controller** executes this task directly. The implementer subagents of Tas
 - [ ] **Step 1: Rule-based pilot**
 
 ```bash
-uv run python -m jeff gen-rules --family returns  --clusters 200 --seed 0 --out data/synthetic/rules/returns.jsonl
-uv run python -m jeff gen-rules --family actions  --clusters 200 --seed 0 --out data/synthetic/rules/actions.jsonl
-uv run python -m jeff gen-rules --family severity --clusters 200 --seed 0 --out data/synthetic/rules/severity.jsonl
+uv run python -m yev gen-rules --family returns  --clusters 200 --seed 0 --out data/synthetic/rules/returns.jsonl
+uv run python -m yev gen-rules --family actions  --clusters 200 --seed 0 --out data/synthetic/rules/actions.jsonl
+uv run python -m yev gen-rules --family severity --clusters 200 --seed 0 --out data/synthetic/rules/severity.jsonl
 ```
 
 Expected: three lines, each reporting 200 clusters.
 
 - [ ] **Step 2: Plan the Opus pilot**
 
-Run: `uv run python -m jeff synth plan --dir data/synthetic/pilot --clusters 200 --per-batch 10 --seed 0`
+Run: `uv run python -m yev synth plan --dir data/synthetic/pilot --clusters 200 --per-batch 10 --seed 0`
 Expected: `planned 200 clusters in 20 batches`, with 2 batches per family.
 
 - [ ] **Step 3: Dispatch the writers**
@@ -2151,33 +2151,33 @@ Expected: `planned 200 clusters in 20 batches`, with 2 batches per family.
 
 - [ ] **Step 4: Ingest**
 
-Run: `uv run python -m jeff synth ingest --dir data/synthetic/pilot`
+Run: `uv run python -m yev synth ingest --dir data/synthetic/pilot`
 Record: `reports/ingest.json`.
 - If `bad_json + bad_shape` exceeds 10% of lines, stop.
 - Read 3 bad lines, fix the writer prompt (Task 6) through a normal fix task, and re-run only the affected batches.
 
 - [ ] **Step 5: Blind check**
 
-Run: `uv run python -m jeff synth check-prepare --dir data/synthetic/pilot`
+Run: `uv run python -m yev synth check-prepare --dir data/synthetic/pilot`
 - Dispatch one **fresh** subagent per `check/*.prompt.md`, with `model: "opus"`, running in the background, up to 5 at a time.
 - The dispatch prompt says only: "Read `<absolute path to the .prompt.md>` and do exactly what it says."
 - Never mention the key or the `private/` directory.
 
-Then run: `uv run python -m jeff synth check-score --dir data/synthetic/pilot`
+Then run: `uv run python -m yev synth check-score --dir data/synthetic/pilot`
 
 - [ ] **Step 6: Edit attribution**
 
-Run: `uv run python -m jeff synth attrib-prepare --dir data/synthetic/pilot`
+Run: `uv run python -m yev synth attrib-prepare --dir data/synthetic/pilot`
 - Dispatch one fresh `model: "opus"` subagent per `attrib/*.prompt.md`, the same way as in Step 5.
 
-Then run: `uv run python -m jeff synth attrib-score --dir data/synthetic/pilot`
+Then run: `uv run python -m yev synth attrib-score --dir data/synthetic/pilot`
 
 - [ ] **Step 7: Contamination filter over the synthetic pools**
 
 ```bash
 mkdir -p data/synthetic/pilot/filter-in
 cp data/synthetic/pilot/final/synthetic_opus.jsonl data/synthetic/rules/*.jsonl data/synthetic/pilot/filter-in/
-uv run python -m jeff filter --in data/synthetic/pilot/filter-in --out data/synthetic/pilot/filtered
+uv run python -m yev filter --in data/synthetic/pilot/filter-in --out data/synthetic/pilot/filtered
 ```
 
 Expected: exit 0, and `canary` = 0.

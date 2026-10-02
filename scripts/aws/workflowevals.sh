@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run the four TypeSafe WorkflowEvals workflows against `jeff serve` on THIS box (the GPU box, not the laptop).
-# Start the server first (e.g. scripts/aws/run.sh --bg --log serve jeff serve --model ... --port 8000), then:
+# Run the four TypeSafe WorkflowEvals workflows against `yev serve` on THIS box (the GPU box, not the laptop).
+# Start the server first (e.g. scripts/aws/run.sh --bg --log serve yev serve --model ... --port 8000), then:
 #   scripts/aws/run.sh --bg --log workflowevals bash scripts/aws/workflowevals.sh
 # Everything lands in ~/workflowevals/yev-4b/: <workflow>.log, <workflow>/{scores,results}.json, run_meta.json.
 # WorkflowEvals rejects every TypeSafe model name except jev-1.13.0, so that name is passed; our server ignores it.
@@ -19,7 +19,7 @@ MODEL=typesafe:jev-1.13.0
 WORKFLOWS=(invoice_processing customer_service agent_trace_observability security_incidents)
 
 curl -fsS --max-time 10 "$WE_SERVER/health" > /dev/null \
-  || { echo "jeff serve is not answering at $WE_SERVER/health; start it first" >&2; exit 3; }
+  || { echo "yev serve is not answering at $WE_SERVER/health; start it first" >&2; exit 3; }
 
 if [ ! -f "$WE_DIR/run.py" ] && [ "$WE_RUNNER" = "uv run python run.py" ]; then
   mkdir -p "$(dirname "$WE_DIR")"
@@ -34,7 +34,7 @@ mkdir -p "$WE_OUT"
 export TYPESAFE_API_KEY="${TYPESAFE_API_KEY:-local}"
 
 WE_SHA="$(git -C "$WE_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
-JEFF_SHA="$(cat "$HOME/jeff/GIT_SHA" 2>/dev/null || echo unknown)"
+YEV_SHA="$(cat "$HOME/yev/GIT_SHA" 2>/dev/null || echo unknown)"
 TIMES="$WE_OUT/.times.tsv"; : > "$TIMES"
 FAILED=0
 
@@ -55,14 +55,14 @@ for wf in "${WORKFLOWS[@]}"; do
   done
 done
 
-python3 - "$TIMES" "$WE_OUT/run_meta.json" "$WE_SHA" "$JEFF_SHA" "$WE_SERVER" "$MODEL" <<'PY'
+python3 - "$TIMES" "$WE_OUT/run_meta.json" "$WE_SHA" "$YEV_SHA" "$WE_SERVER" "$MODEL" <<'PY'
 import json, sys
-times, out, we_sha, jeff_sha, server, model = sys.argv[1:]
+times, out, we_sha, yev_sha, server, model = sys.argv[1:]
 wf = {}
 for line in open(times):
     name, secs, rc = line.rstrip("\n").split("\t")
     wf[name] = {"wall_clock_s": int(secs), "exit_code": int(rc)}
-json.dump({"workflowevals_commit": we_sha, "jeff_git_sha": jeff_sha, "server": server,
+json.dump({"workflowevals_commit": we_sha, "yev_git_sha": yev_sha, "server": server,
            "model_arg": model, "workflows": wf}, open(out, "w"), indent=2)
 PY
 rm -f "$TIMES"

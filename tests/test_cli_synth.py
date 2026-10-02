@@ -1,5 +1,5 @@
-from jeff import cli
-from jeff.schema import read_jsonl
+from yev import cli
+from yev.schema import read_jsonl
 
 
 def test_gen_rules_writes_valid_clusters(tmp_path):

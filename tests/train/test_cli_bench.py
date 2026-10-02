@@ -1,11 +1,11 @@
-"""`jeff bench score` and `jeff bench overlap` end to end on a tiny model (no network)."""
+"""`yev bench score` and `yev bench overlap` end to end on a tiny model (no network)."""
 import json
 
-from jeff import cli
-from jeff.bench import decidebench as B
-from jeff.bench import rjudge
-from jeff.bench.common import write_json, write_rows
-from jeff.train import infer
+from yev import cli
+from yev.bench import decidebench as B
+from yev.bench import rjudge
+from yev.bench.common import write_json, write_rows
+from yev.train import infer
 
 OPTS = [{"key": "approve", "description": "Approve it."}, {"key": "block", "description": "Block it."}]
 

@@ -1,5 +1,5 @@
 import math, random
-from jeff.train.calibrate import fit_temperatures
+from yev.train.calibrate import fit_temperatures
 
 def test_recovers_overconfident_temperature():
     rng = random.Random(0)

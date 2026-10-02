@@ -1,7 +1,7 @@
 """yev-4b: score one decision with a single forward pass and print the option probabilities.
 
 Standalone (transformers + peft). It reproduces the readout in the training repo
-(`src/jeff/train/infer.py` + `src/jeff/train/readout.py`):
+(`src/yev/train/infer.py` + `src/yev/train/readout.py`):
 
 1. Render the TEV chat format: the fixed system prompt, then a JSON user turn
    {state, question, options:[{label, key, description}]} with letters A-F.
@@ -55,7 +55,7 @@ EXAMPLE = {
 
 
 def render(decision: dict) -> list[dict]:
-    """Chat messages in the training format (jeff.format.render, zero-shot, options as given)."""
+    """Chat messages in the training format (yev.format.render, zero-shot, options as given)."""
     user = json.dumps(
         {
             "state": decision["state"],

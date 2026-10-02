@@ -1,7 +1,7 @@
 import json
 
-from jeff import cli
-from jeff.train import infer
+from yev import cli
+from yev.train import infer
 
 
 def _setup(tmp_path, monkeypatch, tok, tiny_model, make_row):
@@ -39,7 +39,7 @@ def test_train_cli_rejects_missing_config(tmp_path):
 
 def test_stage0_configs_load():
     from pathlib import Path
-    from jeff.train.trainer import TrainConfig
+    from yev.train.trainer import TrainConfig
     root = Path(__file__).resolve().parents[2] / "configs" / "stage0"
     names = {p.stem for p in root.glob("*.json")}
     assert names == {"smoke", "lc25", "lc50", "lc100", "ab_pair", "ab_perm", "ab_both"}
@@ -49,7 +49,7 @@ def test_stage0_configs_load():
 
 
 def test_train_skips_finished_run_unless_forced(tmp_path, monkeypatch, capsys):
-    from jeff.train import trainer
+    from yev.train import trainer
     out = tmp_path / "out"
     (out / "final").mkdir(parents=True)
     summ = out / "train_summary.json"
@@ -67,7 +67,7 @@ def test_train_skips_finished_run_unless_forced(tmp_path, monkeypatch, capsys):
 
 
 def test_git_sha_falls_back_to_file(tmp_path, monkeypatch):
-    from jeff import provenance
+    from yev import provenance
     monkeypatch.setattr(provenance, "REPO_ROOT", tmp_path)
     (tmp_path / "GIT_SHA").write_text("abc123-dirty\n")
     def no_git(*a, **k):

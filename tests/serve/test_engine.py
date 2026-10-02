@@ -9,13 +9,13 @@ torch = pytest.importorskip("torch")
 pytest.importorskip("transformers")
 from pydantic import TypeAdapter  # noqa: E402
 
-from jeff.format import LETTERS  # noqa: E402
-from jeff.serve.contract import ChoiceAnswer, NoulAnswer, QuestionSpec, ScoreAnswer, Usage  # noqa: E402
-from jeff.serve.engine import Engine  # noqa: E402
-from jeff.serve.mapping import Unsupported, to_rows  # noqa: E402
-from jeff.train import readout  # noqa: E402
-from jeff.train.data import N_MAX, letter_token_ids  # noqa: E402
-from jeff.train.infer import letter_logits  # noqa: E402
+from yev.format import LETTERS  # noqa: E402
+from yev.serve.contract import ChoiceAnswer, NoulAnswer, QuestionSpec, ScoreAnswer, Usage  # noqa: E402
+from yev.serve.engine import Engine  # noqa: E402
+from yev.serve.mapping import Unsupported, to_rows  # noqa: E402
+from yev.train import readout  # noqa: E402
+from yev.train.data import N_MAX, letter_token_ids  # noqa: E402
+from yev.train.infer import letter_logits  # noqa: E402
 
 QS = TypeAdapter(dict[str, QuestionSpec])
 MARKER = "longer than the maximum model length"
@@ -96,7 +96,7 @@ def test_missing_temperature_defaults_to_one(tok, tiny_model, tmp_path):
 def test_overlong_state_refused(tok, tiny_model, monkeypatch):
     e = engine(tok, tiny_model, max_len=120)
     called = []
-    monkeypatch.setattr("jeff.serve.engine.letter_logits", lambda *a, **k: called.append(1))
+    monkeypatch.setattr("yev.serve.engine.letter_logits", lambda *a, **k: called.append(1))
     short = to_rows("short", questions(c=CHOICE))
     assert e.n_tokens(short[0]["messages"]) <= 120
     with pytest.raises(Unsupported) as err:
@@ -108,7 +108,7 @@ def test_overlong_state_refused(tok, tiny_model, monkeypatch):
 
 def test_unsupported_question_refused_before_inference(tok, tiny_model, monkeypatch):
     e = engine(tok, tiny_model, max_len=512)
-    monkeypatch.setattr("jeff.serve.engine.letter_logits", lambda *a, **k: pytest.fail("ran the model"))
+    monkeypatch.setattr("yev.serve.engine.letter_logits", lambda *a, **k: pytest.fail("ran the model"))
     too_wide = {"type": "choice", "criteria": {f"k{i}": None for i in range(27)}}
     with pytest.raises(Unsupported, match="options per choice"):
         e.answer("s", questions(c=CHOICE, w=too_wide))

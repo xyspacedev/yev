@@ -2,11 +2,11 @@ import json
 
 import pytest
 
-from jeff import cli
-from jeff.filters.contamination import build_fingerprints
-from jeff.filters.pipeline import ContaminationError
-from jeff.mix import build_mix, holdout_key, unit_key, write_mix
-from jeff.schema import Decision, Option, read_jsonl, write_jsonl
+from yev import cli
+from yev.filters.contamination import build_fingerprints
+from yev.filters.pipeline import ContaminationError
+from yev.mix import build_mix, holdout_key, unit_key, write_mix
+from yev.schema import Decision, Option, read_jsonl, write_jsonl
 
 OPTS = [Option("a", "Option a."), Option("b", "Option b."), Option("c", "Option c.")]
 NO_BENCH = build_fingerprints([])
