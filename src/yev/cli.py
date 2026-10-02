@@ -24,7 +24,7 @@ from yev.filters.contamination import (
 from yev.filters.pipeline import assert_clean, run_filters
 from yev.filters.shortcut import run_shortcut
 from yev.mix import build_mix, write_mix
-from yev.generators import actions, drills, many_options, returns, returns_v2, scales, severity
+from yev.generators import actions, drills, invoices, many_options, returns, returns_v2, scales, severity
 from yev.generators.common import EDIT_TYPES
 from yev.generators.llm.attrib import prepare_pairs, render_attrib_prompt, score_attribution
 from yev.generators.llm.check import prepare_sheets, render_checker_prompt, score_answers
@@ -104,7 +104,8 @@ def cmd_dev(args: argparse.Namespace) -> int:
 
 RULE_GENERATORS = {"returns": returns.generate, "actions": actions.generate, "severity": severity.generate,
                    "returns_v2": returns_v2.generate, "date_number_drills": drills.generate,
-                   "numbered_scales": scales.generate, "many_options": many_options.generate}
+                   "numbered_scales": scales.generate, "many_options": many_options.generate,
+                   "invoice_ledger": invoices.generate}
 
 
 def cmd_gen_rules(args: argparse.Namespace) -> int:
