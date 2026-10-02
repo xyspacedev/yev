@@ -51,15 +51,20 @@ def _read(path: Path | None, what: str) -> dict:
     if not path.is_file():
         raise Missing(f"{what}: {path} not found")
     try:
-        return json.loads(path.read_text())
+        obj = json.loads(path.read_text())
     except ValueError as e:
         raise Missing(f"{what}: {path} is not JSON ({e})") from None
+    if not isinstance(obj, dict):
+        raise Missing(f"{what}: {path} top level is {type(obj).__name__}, not an object")
+    return obj
 
 
 def _num(obj: dict, key: str, where: str) -> float:
     v = obj.get(key)
     if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
         raise Missing(f"{where}: no numeric {key!r}")
+    if not 0.0 <= v <= 1.0:  # every gated input is a fraction; a percent here must not pass
+        raise Missing(f"{where}: {key!r} = {v} is outside [0, 1]")
     return float(v)
 
 
@@ -82,10 +87,13 @@ def workflowevals_overall(d: Path | None) -> tuple[float, dict]:
         path = Path(d) / wf / "scores.json"
         try:
             scores = _read(path, f"WorkflowEvals {wf}")
-            series = [s for s in scores.get("series", []) if s.get("label_set_id") == CONSENSUS]
+            series = [s for s in scores.get("series") or [] if isinstance(s, dict)
+                      and s.get("label_set_id") == CONSENSUS]
             if len(series) != 1:
                 raise Missing(f"WorkflowEvals {wf}: {len(series)} {CONSENSUS} series in {path}")
-            detail[wf] = {"metric": metric, "value": _num(series[0].get("metrics", {}), metric, f"{path} {CONSENSUS}")}
+            metrics = series[0].get("metrics")
+            detail[wf] = {"metric": metric,
+                          "value": _num(metrics if isinstance(metrics, dict) else {}, metric, f"{path} {CONSENSUS}")}
         except Missing as e:
             missing.append(str(e))
     if missing:
@@ -93,16 +101,24 @@ def workflowevals_overall(d: Path | None) -> tuple[float, dict]:
     return 100 * sum(x["value"] for x in detail.values()) / len(detail), detail
 
 
-def _decidebench(d: Path | None) -> tuple[float, dict]:
+def _run_of(obj: dict) -> dict:
+    run = obj.get("run")
+    return run if isinstance(run, dict) else {}
+
+
+def _decidebench(d: Path | None, stage: str) -> tuple[float, dict]:
     if d is None:
         raise Missing("DecideBench: --decidebench not given")
     path = Path(d) / "metrics.json"
     m = _read(path, "DecideBench")
-    variant = m.get("variant", (m.get("run") or {}).get("variant"))
+    run = _run_of(m)
+    variant = m.get("variant", run.get("variant"))
     if variant != "examples":
         raise Missing(f"DecideBench: {path} is variant {variant!r}, the gate needs 'examples'")
-    return 100 * _num(m, "accuracy", str(path)), {"source": str(path), "variant": variant,
-                                                  "stage": (m.get("run") or {}).get("stage")}
+    got = run.get("stage")
+    if got != stage:  # the test set is scored once per stage; an earlier stage's score must not pass
+        raise Missing(f"DecideBench: not {stage} ({path} run.stage = {got!r})")
+    return 100 * _num(m, "accuracy", str(path)), {"source": str(path), "variant": variant, "stage": got}
 
 
 def _bench(d: Path | None, name: str, key: str) -> tuple[float, dict]:
@@ -113,19 +129,33 @@ def _bench(d: Path | None, name: str, key: str) -> tuple[float, dict]:
 
 
 def _dev(path: Path | None, key: str, what: str, scale: float) -> tuple[float, dict]:
-    return scale * _num(_read(path, what), key, f"{what} {path}"), {"source": str(path), "key": key}
+    obj = _read(path, what)
+    return scale * _num(obj, key, f"{what} {path}"), {"source": str(path), "key": key,
+                                                      "model": _run_of(obj).get("model")}
 
 
-def evaluate(stage0_dev=None, stage1_dev=None, workflowevals=None, bench=None, decidebench=None) -> dict:
+def _dev_model(path) -> str | None:
+    try:
+        return _run_of(_read(path, "dev report")).get("model")
+    except Missing:
+        return None
+
+
+def evaluate(stage0_dev=None, stage1_dev=None, workflowevals=None, bench=None, decidebench=None,
+             decidebench_stage: str = "stage1") -> dict:
     getters = {
         "workflowevals_overall": lambda: workflowevals_overall(workflowevals),
-        "decidebench_examples": lambda: _decidebench(decidebench),
+        "decidebench_examples": lambda: _decidebench(decidebench, decidebench_stage),
         "jevbench": lambda: _bench(bench, "jevbench", "accuracy"),
         "dynabench_f1": lambda: _bench(bench, "dynabench_test", "f1"),
         "rjudge_f1": lambda: _bench(bench, "rjudge", "f1"),
         "stage0_dev_accuracy": lambda: _dev(stage0_dev, "accuracy", "Stage 0 dev report", 100.0),
         "ece": lambda: _dev(stage1_dev, "ece", "Stage 1 dev report", 1.0),
     }
+    models = {"stage0_dev": _dev_model(stage0_dev), "stage1_dev": _dev_model(stage1_dev)}
+    clash = None
+    if models["stage0_dev"] and models["stage1_dev"] and models["stage0_dev"] != models["stage1_dev"]:
+        clash = f"dev reports name different models: {models['stage0_dev']!r} vs {models['stage1_dev']!r}"
     rows = []
     for c in CHECKS:
         try:
@@ -133,10 +163,13 @@ def evaluate(stage0_dev=None, stage1_dev=None, workflowevals=None, bench=None, d
             note = None
         except Missing as e:
             value, detail, note = None, None, str(e)
+        if clash and c.name in ("stage0_dev_accuracy", "ece"):
+            value, note = None, clash
         rows.append({"check": c.name, "label": c.label, "value": value, "minimum": c.minimum, "target": c.target,
                      "direction": ">=" if c.higher_is_better else "<=", "status": status(c, value),
                      "detail": detail, "note": note})
     return {"rows": rows, "publishable": all(r["status"] != "FAIL" for r in rows),
+            "decidebench_stage": decidebench_stage, "dev_models": models,
             "inputs": {"stage0_dev": _s(stage0_dev), "stage1_dev": _s(stage1_dev),
                        "workflowevals": _s(workflowevals), "bench": _s(bench), "decidebench": _s(decidebench)}}
 

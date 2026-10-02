@@ -835,7 +835,7 @@ def cmd_gate(args) -> int:
     """Stage 1 publish gate; exit 0 when PUBLISHABLE, 1 when not (a missing input is FAIL)."""
     from yev import gate
     rep = gate.evaluate(stage0_dev=args.stage0_dev, stage1_dev=args.stage1_dev, workflowevals=args.workflowevals,
-                        bench=args.bench, decidebench=args.decidebench)
+                        bench=args.bench, decidebench=args.decidebench, decidebench_stage=args.decidebench_stage)
     rep["git_sha"] = _git_sha()
     _write_json(Path(args.out), rep)
     print(gate.table(rep))
@@ -976,6 +976,8 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--workflowevals", help="directory of <workflow>/scores.json")
     p.add_argument("--bench", help="directory of jevbench/, dynabench_test/, rjudge/ metrics.json")
     p.add_argument("--decidebench", help="directory of the DecideBench test (with examples) metrics.json")
+    p.add_argument("--decidebench-stage", default="stage1",
+                   help="the DecideBench metrics must carry this run.stage (from yev bench score --stage)")
     p.add_argument("--out", required=True, help="gate.json")
     p.set_defaults(func=cmd_gate)
 

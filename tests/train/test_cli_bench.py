@@ -41,6 +41,7 @@ def test_bench_score_writes_predictions_and_metrics(tmp_path, monkeypatch, tok, 
     assert {"ece_15", "brier", "pair_accuracy", "hard", "reference"} <= set(m)
     assert m["run"]["temperatures"] == {"choice": 2.0} and m["run"]["n_skipped_overlong"] == 0
     assert m["run"]["bench_revision"] == "abc" and m["overlap"] == {"share": 0.0, "n_items": 4}
+    assert m["run"]["stage"] is None  # no --stage: Stage 0 shape, which the Stage 1 gate refuses
 
 
 def test_bench_score_binary_benchmark(tmp_path, monkeypatch, tok, tiny_model):
