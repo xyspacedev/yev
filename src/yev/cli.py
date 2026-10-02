@@ -10,7 +10,6 @@ import shutil
 import subprocess
 from collections import defaultdict
 from collections import Counter
-from dataclasses import asdict
 from pathlib import Path
 
 from yev import decidebench
@@ -78,8 +77,8 @@ def cmd_build_public(args: argparse.Namespace) -> int:
         try:
             decisions, stats = build(spec, fetch(spec), seed=args.seed, natural=args.natural, pool_scale=args.pool_scale)
             write_jsonl(out / f"{spec.name}.jsonl", decisions)
-            all_stats[spec.name] = asdict(stats)
-            print(f"{spec.name}: {asdict(stats)}")
+            all_stats[spec.name] = stats.as_dict()
+            print(f"{spec.name}: {stats.as_dict()}")
             _write_stats_atomically(stats_path, all_stats)
         except Exception as exc:
             print(f"{spec.name}: FAILED: {exc!r}")

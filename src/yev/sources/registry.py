@@ -7,6 +7,7 @@ from yev.sources.agent_actions import convert_agent_action_safety
 from yev.sources.fast_decisions import FAST_DECISIONS_CONFIGS, convert_fast_decisions
 from yev.sources.intent import convert_go_emotions, intent_converter
 from yev.sources.moderation import convert_aegis, convert_civil_comments, convert_dynabench
+from yev.sources import public_long
 from yev.sources.nli import convert_multi_nli, convert_negation, convert_snli_cf, convert_vitaminc, convert_wanli
 from yev.sources.replay import convert_boolq, convert_multiple_choice
 from yev.sources.rules import convert_eikos, convert_ruletaker
@@ -58,6 +59,10 @@ SOURCES += [
                convert_fast_decisions, 1000)
     for config in FAST_DECISIONS_CONFIGS
 ]
+
+
+# family 8: long public documents (2k+ tokens), chosen in docs/research/public-long-candidates.md
+SOURCES += list(public_long.SOURCES.values())
 
 
 # Sources read from a local checkout rather than the Hub. Each writes its own files (several

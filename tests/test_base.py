@@ -176,3 +176,20 @@ def test_max_scan_samples_shuffled_rows_not_the_head(monkeypatch):
     assert len(rows) == 3 and [r["x"] for r in rows] != [0, 1, 2]
     assert [r["x"] for r in fetch(spec(lambda *a: [], max_scan=50))] != list(range(10))  # capped at len, still shuffled
     assert len(list(fetch(spec(lambda *a: [], max_scan=50)))) == 10
+
+
+def test_build_prepare_hook_and_state_char_override():
+    seen = []
+
+    def convert(row, i, rng, labels):
+        seen.append(row)
+        return [dec(i, state=row["text"])]
+
+    def prepare(rows):
+        return [{"text": " ".join(r["w"] for r in rows)}]
+
+    long_spec = spec(convert, prepare=prepare, max_state_chars=MAX_STATE_CHARS * 10)
+    out, stats = build(long_spec, [{"w": "x" * MAX_STATE_CHARS}, {"w": "y"}])
+    assert seen == [{"text": "x" * MAX_STATE_CHARS + " y"}]
+    assert len(out) == 1 and stats.scanned == 1 and stats.as_dict() == {
+        "scanned": 1, "converted": 1, "skipped": 0, "kept": 1}

@@ -1,4 +1,3 @@
-import importlib.util
 import json
 
 import pytest
@@ -149,13 +148,12 @@ def test_decision_index_lists_38_benchmarks():
 
 
 def test_public_long_sources_not_in_decision_index():
-    if importlib.util.find_spec("yev.sources.public_long") is None:
-        pytest.skip("yev.sources.public_long arrives in Task 8")
     from yev.sources.public_long import SOURCES
 
+    assert SOURCES
     ids = decision_index_ids()
     tails = {i.rsplit("/", 1)[-1] for i in ids}
-    for s in SOURCES:
+    for s in SOURCES.values():
         sid = (getattr(s, "hf_id", None) or str(s)).lower()
         assert sid not in ids, sid
         assert sid.rsplit("/", 1)[-1] not in tails, sid

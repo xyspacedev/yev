@@ -9,13 +9,17 @@ from __future__ import annotations
 import random
 import re
 from collections import defaultdict
-from dataclasses import dataclass, replace
+import json
+from dataclasses import asdict, dataclass, field, replace
 from typing import Callable, Iterable, Iterator
 
 from yev import licences
 from yev.schema import Decision, SchemaError
 
 MAX_STATE_CHARS = 6000
+# Chat-template tokens around the system and user turns, plus slack for the tokenizer joining the
+# separately counted state and the rest of the user turn.
+PROMPT_OVERHEAD_TOKENS = 24
 
 Converter = Callable[[dict, int, random.Random, list[str]], list[Decision]]
 
@@ -33,6 +37,11 @@ class SourceSpec:
     max_scan: int | None = None
     revision: str | None = None
     data_files: str | None = None
+    # Regroups the raw rows before conversion (e.g. one record per document from per-question rows).
+    prepare: Callable[[list[dict]], list[dict]] | None = None
+    max_state_chars: int = MAX_STATE_CHARS
+    # (min state tokens, max full-prompt tokens), counted with the real tokenizer; rows outside are dropped.
+    token_window: tuple[int, int] | None = None
 
 
 @dataclass
@@ -41,6 +50,13 @@ class BuildStats:
     converted: int = 0
     skipped: int = 0
     kept: int = 0
+    dropped: dict[str, int] = field(default_factory=dict)
+
+    def as_dict(self) -> dict:
+        out = asdict(self)
+        if not out["dropped"]:
+            del out["dropped"]
+        return out
 
 
 def humanize(label: str) -> str:
@@ -109,11 +125,53 @@ def _label_universe(rows: list[dict], column: str) -> list[str]:
     return sorted(labels)
 
 
+def prompt_tokens(d: Decision, count: Callable[[str], int], cache: dict[str, int] | None = None) -> int:
+    """Tokens of the rendered prompt (system turn plus the user turn's JSON), without few-shot examples."""
+    from yev.format import SYSTEM_PROMPT, user_turn
+
+    cache = {} if cache is None else cache
+    key = "json:" + d.state
+    if key not in cache:
+        cache[key] = count(json.dumps(d.state, ensure_ascii=False))
+    rest = user_turn(replace(d, state=""), d.options)
+    return count(SYSTEM_PROMPT) + cache[key] + count(rest) + PROMPT_OVERHEAD_TOKENS
+
+
+def _token_filter(decisions: list[Decision], window: tuple[int, int], count: Callable[[str], int],
+                  stats: BuildStats) -> list[Decision]:
+    lo, hi = window
+    cache: dict[str, int] = {}
+    bad_clusters: set[str] = set()
+    kept: list[Decision] = []
+    for d in decisions:
+        if d.state not in cache:
+            cache[d.state] = count(d.state)
+        reason = None
+        if cache[d.state] < lo:
+            reason = "too_short"
+        elif prompt_tokens(d, count, cache) > hi:
+            reason = "too_long"
+        if reason:
+            stats.dropped[reason] = stats.dropped.get(reason, 0) + 1
+            stats.skipped += 1
+            if d.cluster_id:
+                bad_clusters.add(d.cluster_id)
+            continue
+        kept.append(d)
+    out = [d for d in kept if d.cluster_id not in bad_clusters]
+    stats.skipped += len(kept) - len(out)
+    return out
+
+
 def build(
-    spec: SourceSpec, rows: Iterable[dict], seed: int = 0, *, natural: bool = False, pool_scale: float = 1.0
+    spec: SourceSpec, rows: Iterable[dict], seed: int = 0, *, natural: bool = False, pool_scale: float = 1.0,
+    count: Callable[[str], int] | None = None,
 ) -> tuple[list[Decision], BuildStats]:
+    """`count` measures tokens for `spec.token_window`; by default the real Qwen3.5 tokenizer (no heuristic)."""
     licences.check(spec.hf_id, spec.licence, config=spec.config, split=spec.split, data_files=spec.data_files)
     rows = list(rows)
+    if spec.prepare:
+        rows = spec.prepare(rows)
     labels = _label_universe(rows, spec.label_column) if spec.label_column else []
     rng = random.Random(f"{seed}:{spec.name}")
     stats = BuildStats()
@@ -140,7 +198,7 @@ def build(
                 licence=spec.licence,
                 cluster_id=f"{spec.name}:{d.cluster_id}" if d.cluster_id else None,
             )
-            if len(d.state) > MAX_STATE_CHARS:
+            if len(d.state) > spec.max_state_chars:
                 stats.skipped += 1
                 if d.cluster_id:
                     skipped_clusters.add(d.cluster_id)
@@ -155,6 +213,12 @@ def build(
     filtered = [d for d in converted if d.cluster_id not in skipped_clusters]
     stats.skipped += len(converted) - len(filtered)
     converted = filtered
+    if spec.token_window:
+        if count is None:
+            from yev.generators.padding import load_token_counter
+
+            count = load_token_counter()
+        converted = _token_filter(converted, spec.token_window, count, stats)
     stats.converted = len(converted)
     target = max(1, int(spec.pool_size * pool_scale))
     kept = (sample_natural if natural else sample_pool)(converted, target, seed)
