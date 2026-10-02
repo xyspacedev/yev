@@ -4,8 +4,7 @@ Date: 2026-09-29 · Status: approved in conversation, awaiting written-spec revi
 
 ## 1. Goal
 
-Train and publish an open, Apache-2.0 **System One** decision model from `Qwen/Qwen3.5-4B-Base`
-(working name `yev-4b`) that beats TEV on DecideBench v1.0:
+Train and publish an open, Apache-2.0 **System One** decision model from `Qwen/Qwen3.5-4B-Base` that beats TEV on DecideBench v1.0:
 
 - **Must:** accuracy > 92.8 % **and** pair accuracy > 86.0 % (TEV, self-hosted).
 - **Stretch:** ≥ 95.0 % accuracy (imajev-4b, best open model).

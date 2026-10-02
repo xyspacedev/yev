@@ -81,7 +81,7 @@ For comparison, TEV scores 92.8 % / 86.0 % with examples and 90.0 % zero-shot, a
 examples. yev-4b clears TEV and is statistically tied with imajev-4b; it does not beat imajev-4b.
 
 This is the **Stage 0** model of the planned pipeline: one epoch of LoRA on 44k rows. Stages 1, 2 and 2b (broader data,
-mined hard examples, a calibration pass) have not been run. The code repository still uses the working name `yev`.
+mined hard examples, a calibration pass) have not been run.
 
 > Status: draft card. Items marked **TBD** are listed in `RELEASE_CHECKLIST.md`.
 
@@ -106,8 +106,9 @@ mined hard examples, a calibration pass) have not been run. The code repository 
   | score | 1.0108 |
 
 - **Score items** return the distribution over scale points. A server can also return its expected value (spec §6).
-- **Serving.** The planned `POST /v1/systemone` endpoint and an OpenAI-compatible chat endpoint that returns one letter
-  are **TBD**: they are not part of this release yet.
+- **Serving.** `yev serve` provides `POST /v1/systemone` and an OpenAI-compatible `POST /v1/chat/completions` that
+  returns one letter (see `docs/serving.md`). It uses the transformers backend (not vLLM) with state-prefix KV caching
+  for multi-question requests. Letters A-Z are served, but the model was trained on at most 6 options.
 
 ### Prompt format (exact)
 

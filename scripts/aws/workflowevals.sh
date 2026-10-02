@@ -21,10 +21,19 @@ WORKFLOWS=(invoice_processing customer_service agent_trace_observability securit
 curl -fsS --max-time 10 "$WE_SERVER/health" > /dev/null \
   || { echo "yev serve is not answering at $WE_SERVER/health; start it first" >&2; exit 3; }
 
-if [ ! -f "$WE_DIR/run.py" ] && [ "$WE_RUNNER" = "uv run python run.py" ]; then
-  mkdir -p "$(dirname "$WE_DIR")"
-  git clone -q "$WE_REPO" "$WE_DIR" || exit 4
+if [ "$WE_RUNNER" = "uv run python run.py" ]; then
+  export PATH="$HOME/venv/bin:$PATH"
+  if ! command -v uv > /dev/null 2>&1; then
+    pip install uv || exit 4
+  fi
+  if [ ! -f "$WE_DIR/run.py" ]; then
+    mkdir -p "$(dirname "$WE_DIR")"
+    git clone -q "$WE_REPO" "$WE_DIR" || exit 4
+  fi
+  git -C "$WE_DIR" fetch -q origin 2>/dev/null || echo "warning: git fetch failed (offline?); using local objects" >&2
   git -C "$WE_DIR" checkout -q "$WE_COMMIT" || exit 4
+  [ "$(git -C "$WE_DIR" rev-parse HEAD)" = "$WE_COMMIT" ] \
+    || { echo "WorkflowEvals HEAD is not $WE_COMMIT" >&2; exit 4; }
   (cd "$WE_DIR" && uv sync --locked) || exit 4
 fi
 [ -d "$WE_DIR" ] || { echo "WE_DIR $WE_DIR does not exist" >&2; exit 4; }
@@ -40,6 +49,9 @@ FAILED=0
 
 for wf in "${WORKFLOWS[@]}"; do
   echo "== $wf" >&2
+  if [ "${WE_RESUME:-0}" != 1 ]; then
+    rm -rf "$WE_DIR/runs/$wf/$RUN_NAME" "$WE_OUT/$wf"
+  fi
   start=$(date +%s)
   # $WE_RUNNER is deliberately word-split (it is a command line).
   (cd "$WE_DIR" && $WE_RUNNER "$wf" --model "$MODEL" --base-url "$WE_SERVER" --name "$RUN_NAME") \

@@ -7,7 +7,7 @@ OpenAI-style chat endpoint. The wire format follows `typesafe-sdk` 0.7.2; the de
 ## Running it
 
 ```bash
-yev serve --model runs/yev-4b/adapter --base /models/Qwen3-4B-Base \
+yev serve --model runs/yev-4b/adapter --base /models/Qwen3.5-4B-Base \
            --calibration runs/yev-4b/calibration.json --model-name yev-4b
 ```
 
@@ -43,6 +43,10 @@ token per question in the batch (8 full-attention layers), so 16 questions over 
 of the model. Single-question requests and shorter prefixes use the exact uncached path, unchanged. The two paths agree
 to within 1e-4 on the CPU test models; on the GPU the chunked linear-attention kernels can differ slightly, which
 `scripts/serve_parity.py` measures on real requests (`--no-prefix-cache` turns the cache off).
+
+Measured on an L40S with real WorkflowEvals invoice states (3 x 36 questions plus one fixture): cached and exact argmax
+agreed on 114/114 questions, max |dp| was 3.1e-2, and the cached path took 13.2 s against 93.1 s for the exact path.
+DecideBench and calibration were measured on the exact path; the published WorkflowEvals answers used the cached path.
 
 - **noul** has two options, yes first and no second, always. `criteria.true` / `criteria.false` are the descriptions
   when given. The answer is `noul` = P(yes).
@@ -160,6 +164,13 @@ commit (`uv sync --locked`), logs each to `~/workflowevals/yev-4b/<workflow>.log
 writes `run_meta.json` (WorkflowEvals commit, our `GIT_SHA`, wall-clock seconds and exit code per workflow). It exits 3 if
 `/health` does not answer. Run it detached with `scripts/aws/run.sh --bg --log workflowevals bash scripts/aws/workflowevals.sh`.
 Scores are agreement with frontier-LLM consensus, not human ground truth.
+
+Set `WE_RESUME=1` to resume an earlier run; by default the script deletes `runs/<workflow>/yev-4b` and the copied
+results before each workflow so stale numbers cannot be published. It installs `uv` with pip if missing, re-checks out the
+pinned commit on an existing clone (exit 4 on mismatch) and always runs `uv sync --locked`.
+
+**After the rename:** the box's old checkout at `~/jeff` should be moved (`mv ~/jeff ~/yev`) or re-synced, then
+reinstalled with `pip install -e '.[train,serve]'`.
 
 ### Decision Index kit `http` engine
 

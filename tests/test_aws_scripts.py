@@ -206,3 +206,112 @@ def test_workflowevals_pins_commit_and_has_no_host():
     t = Path("scripts/aws/workflowevals.sh").read_text()
     assert re.search(r"WE_COMMIT:-[0-9a-f]{40}\}", t)
     assert "YEV_TRAIN" not in t  # runs on the box; needs no laptop-side env
+
+
+def _we_default_env(tmp_path, head=None, with_uv=True, existing=True):
+    """Default-runner harness: fake git/uv/pip/curl on PATH log every call to $HOME/calls."""
+    home = tmp_path / "home"
+    (home / "yev").mkdir(parents=True)
+    (home / "venv/bin").mkdir(parents=True)
+    (home / "yev/GIT_SHA").write_text("abc\n")
+    commit = "a" * 40
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    uv_body = (
+        '#!/bin/bash\necho "uv $*" >> "$HOME/calls"\n'
+        '[ "$1" = run ] || exit 0\nshift 3\n'  # uv run python run.py <wf> ...
+        'mkdir -p runs/$1/yev-4b\necho "{\\"fresh\\": true}" > runs/$1/yev-4b/scores.json\nexit 0\n'
+    )
+    scripts = {
+        "git": (
+            '#!/bin/bash\necho "git $*" >> "$HOME/calls"\n'
+            'case "$*" in clone*) mkdir -p "${@: -1}"; touch "${@: -1}/run.py";; '
+            f'*rev-parse*) echo "{head or commit}";; esac\nexit 0\n'
+        ),
+        "curl": "#!/bin/sh\nexit 0\n",
+    }
+    for name, body in scripts.items():
+        (bindir / name).write_text(body)
+    if with_uv:
+        (bindir / "uv").write_text(uv_body)
+    else:
+        # pip "installs" uv into the venv; the script must call it
+        (home / "venv/bin/pip").write_text(
+            '#!/bin/bash\necho "pip $*" >> "$HOME/calls"\n'
+            f"cat > \"$HOME/venv/bin/uv\" <<'EOF'\n{uv_body}EOF\nchmod +x \"$HOME/venv/bin/uv\"\n"
+        )
+        (home / "venv/bin/pip").chmod(0o755)
+    for f in bindir.iterdir():
+        f.chmod(0o755)
+    we = tmp_path / "we"
+    if existing:
+        we.mkdir()
+        (we / "run.py").write_text("")
+    env = {
+        "PATH": f"{bindir}:/usr/bin:/bin",
+        "HOME": str(home),
+        "WE_DIR": str(we),
+        "WE_COMMIT": commit,
+        "WE_RUNNER": "uv run python run.py",
+    }
+    return home, we, env
+
+
+def _run_we(env, **extra):
+    return subprocess.run(["bash", "scripts/aws/workflowevals.sh"], env={**env, **extra}, capture_output=True, text=True, timeout=60)
+
+
+def test_workflowevals_default_runner_checks_out_pin_and_always_syncs(tmp_path):
+    home, we, env = _we_default_env(tmp_path)  # existing clone
+    r = _run_we(env)
+    assert r.returncode == 0, r.stderr
+    calls = (home / "calls").read_text().splitlines()
+    assert f"git -C {we} fetch -q origin" in calls
+    assert f"git -C {we} checkout -q {'a' * 40}" in calls
+    assert "uv sync --locked" in calls  # outside the clone branch
+    assert not any("clone" in c for c in calls)
+    assert calls.index("uv sync --locked") > calls.index(f"git -C {we} checkout -q {'a' * 40}")
+    assert sum(c.startswith("uv run") for c in calls) == 4
+
+
+def test_workflowevals_fresh_clone_then_sync(tmp_path):
+    home, we, env = _we_default_env(tmp_path, existing=False)
+    r = _run_we(env)
+    assert r.returncode == 0, r.stderr
+    calls = (home / "calls").read_text().splitlines()
+    assert any(c.startswith("git clone") for c in calls) and "uv sync --locked" in calls
+
+
+def test_workflowevals_installs_uv_when_missing(tmp_path):
+    home, we, env = _we_default_env(tmp_path, with_uv=False)
+    r = _run_we(env)
+    assert r.returncode == 0, r.stderr
+    calls = (home / "calls").read_text().splitlines()
+    assert calls[0] == "pip install uv"
+    assert "uv sync --locked" in calls
+
+
+def test_workflowevals_exit_4_on_pin_mismatch(tmp_path):
+    home, we, env = _we_default_env(tmp_path, head="b" * 40)
+    r = _run_we(env)
+    assert r.returncode == 4 and "is not" in r.stderr
+    calls = (home / "calls").read_text()
+    assert "uv sync" not in calls and "uv run" not in calls
+    assert not (home / "workflowevals/yev-4b/run_meta.json").exists()
+
+
+def test_workflowevals_removes_stale_results_unless_resume(tmp_path):
+    for resume in (False, True):
+        sub = tmp_path / ("resume" if resume else "fresh")
+        sub.mkdir()
+        home, we, env = _we_default_env(sub)
+        # fake uv run only writes scores.json, so a surviving results.json or marker is stale
+        for d in (we / "runs/customer_service/yev-4b", home / "workflowevals/yev-4b/customer_service"):
+            d.mkdir(parents=True)
+            (d / "results.json").write_text("stale")
+        r = _run_we(env, **({"WE_RESUME": "1"} if resume else {}))
+        assert r.returncode == 0, r.stderr
+        stale_src = (we / "runs/customer_service/yev-4b/results.json").exists()
+        stale_dst = (home / "workflowevals/yev-4b/customer_service/results.json").exists()
+        assert stale_src is resume and stale_dst is resume
+        assert (home / "workflowevals/yev-4b/customer_service/scores.json").exists()

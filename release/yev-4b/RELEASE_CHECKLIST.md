@@ -30,7 +30,7 @@ Released checkpoint: **`lc100`**, the ablation winner on DecideBench-dev templat
 | 1.5 | `calibration.json` (lc100 temperatures) | ✅ | `release/yev-4b/calibration.json`, copied from `data/runs/lc100/calibration.json`: choice 0.9360, noul 0.9812, score 1.0108, n = 2000. ⚠️ It still holds the box paths in `model`/`data` (`/home/ubuntu/...`). These are harmless, but decide whether to strip them. |
 | 1.6 | Model card | ✅ draft | `release/yev-4b/README.md`. Its TBDs are listed in §6 below. Re-check every number if anything is re-run. |
 | 1.7 | Example inference script | ✅ / ⚠️ | `release/yev-4b/inference_example.py`. Checks done: `py_compile` passes; the rendered messages equal `yev.format.render`; letter ids match `yev.train.data.letter_token_ids`. On the **base model** (no adapter), its letter logits are bit-identical to `yev.train.infer.letter_logits` for a right-padded 2-row batch. **Not yet run with the adapter.** Run it once on the box and compare with `yev eval` on a few dev rows. |
-| 1.8 | Minimal serving code (spec §6): `POST /v1/systemone` + `POST /v1/chat/completions`, vLLM backend, letter-restricted, state-prefix caching | ❌ | **Does not exist in the repo.** There is no `serve` module, and Plan 3 deferred it to "Plan 4". It must also pass `enable_thinking=False` and right-pad, or use vLLM's own handling, and return a Score item's distribution plus its expected value. |
+| 1.8 | Minimal serving code (spec §6): `POST /v1/systemone` + `POST /v1/chat/completions`, letter-restricted, state-prefix caching | ✅ | Done: `yev serve`, documented in `docs/serving.md`. Transformers backend (not vLLM); state-prefix KV caching for multi-question requests; letters A-Z are served but the model was trained on at most 6 options. Returns a Score item's distribution plus its expected value. |
 | 1.9 | `LICENSE` (Apache-2.0 full text) | ❌ | Not in the repo or in `release/`. Add it to the model repo, and to the code repo too. |
 | 1.10 | Base-model licence confirmed compatible | ⚠️ | The card says the base is "distributed under its own licence (TBD)". Confirm the `Qwen/Qwen3.5-4B-Base` licence on its model card, and state it. |
 | 1.11 | Third-party attribution: skill-atlas | ✅ / ⚠️ | `release/yev-4b/ATTRIBUTION.json` is a copy of `data/public/skill_atlas_filtered/ATTRIBUTION.json`: 6,106 skills from 2,368 repos (4,174 MIT, 1,932 Apache-2.0). It covers the whole filtered pool, which is a superset of the rows used. Decide whether to trim it to the skills actually in train/dev. MIT/Apache notice-retention clearly applies to the dataset repo, which redistributes skill text. For the weights it is a courtesy; decide whether to keep it there. |
@@ -77,7 +77,7 @@ Released checkpoint: **`lc100`**, the ablation winner on DecideBench-dev templat
 | # | Item | Status | Where / notes |
 |---|---|---|---|
 | 5.1 | DecideBench test, with examples + zero-shot | ✅ | `data/bench_results/decidebench_{examples,zeroshot}/metrics.json`: 94.5 / 89.0 and 95.0 / 90.0. Run once each. |
-| 5.2 | DecideBench self-hosted leaderboard entry (spec §7) | ❌ | Not submitted. The spec asks for an entry in the DecideBench repo with both columns, 4 requests in flight, and pricing at the L4 GPU-hour rate. It needs the serving endpoint (1.8), because DecideBench runs TEV through `/v1/chat/completions`. ⚠️ The spec named the DGX Spark as the host, but training and scoring used the AWS L40S, so decide which host and rate to report. Our scores came from transformers letter-logit readout, not through the harness's HTTP path; re-confirm through the endpoint without rescoring the test more than the submission requires. |
+| 5.2 | DecideBench self-hosted leaderboard entry (spec §7) | ❌ | Not submitted. The spec asks for an entry in the DecideBench repo with both columns, 4 requests in flight, and pricing at the L4 GPU-hour rate. It uses the serving endpoint (1.8, done), because DecideBench runs TEV through `/v1/chat/completions`. ⚠️ The spec named the DGX Spark as the host, but training and scoring used the AWS L40S, so decide which host and rate to report. Our scores came from transformers letter-logit readout, not through the harness's HTTP path; re-confirm through the endpoint without rescoring the test more than the submission requires. |
 | 5.3 | WildGuardTest | ❌ | Not run. `allenai/wildguardmix` is gated, and the AI2 Responsible Use terms have not been accepted on the user's account (the agent did not accept them). After the user accepts: `yev bench build --name wildguardtest`, then `overlap`, then `score`. The card currently says TBD. |
 | 5.4 | JevBench public, DynaBench test, R-Judge | ✅ | `data/bench_results/{jevbench,dynabench_test,rjudge}/metrics.json`. The card reports them with the "doesn't top these" framing. |
 | 5.5 | Stretch claim wording | ⚠️ | The spec §1 must-bar (> 92.8 % and > 86.0 %) is met. The stretch (≥ 95.0 %) is met zero-shot (95.0) but not with examples (94.5). imajev-4b leads with examples (95.0 / 90.5). The card says "tie, not a win"; keep that framing. |
@@ -92,10 +92,9 @@ These must be resolved or explicitly accepted before publishing.
 3. URL of Together's "How to train your own Jev" recipe in the acknowledgements.
 4. Training-run git SHA (4.1).
 5. WildGuardTest results (5.3).
-6. Serving endpoints (1.8).
-7. Merged-weights decision (1.3).
-8. Base-model licence statement (1.10).
-9. DecideBench leaderboard entry (5.2).
+6. Merged-weights decision (1.3).
+7. Base-model licence statement (1.10).
+8. DecideBench leaderboard entry (5.2).
 
 ## 7. Final gate
 
@@ -103,3 +102,5 @@ These must be resolved or explicitly accepted before publishing.
 - [ ] Every ⚠️ has a recorded decision.
 - [ ] Numbers in `README.md` re-checked against `data/runs/lc100/*` and `data/bench_results/*/metrics.json`.
 - [ ] User gives the explicit go. Only then create the HF repos and upload, never before.
+
+Ops note (rename): the box's old checkout at `~/jeff` should be moved (`mv ~/jeff ~/yev`) or re-synced, then reinstalled with `pip install -e '.[train,serve]'`.
