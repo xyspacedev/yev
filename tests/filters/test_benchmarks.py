@@ -300,7 +300,7 @@ def test_eight_and_nine_token_items_exact_match_hashes_stored():
 
 def test_mostly_stoplisted_item_caught_by_remaining_grams():
     # STOCK's 3 grams are shared with y and stoplisted; x keeps only the gram ending in "purple"
-    fp = build_benchmark_fingerprints({"x": [f"{STOCK} purple"], "y": [STOCK]})
+    fp = build_benchmark_fingerprints({"x": [f"{STOCK} purple"], "y": [f"Different words entirely in this item. {STOCK}"]})
     assert len(fp.grams["x"]) == 1
     assert overlaps_any(dec(1, f"Note: anything else i can assist you with today purple, ok"), fp) == "x"
     assert overlaps_any(dec(2, f"Note: {STOCK}, ok"), fp) is None
@@ -311,3 +311,57 @@ def test_strict_benchmark_exempt_from_stoplist():
     fp = build_benchmark_fingerprints({"decidebench": [B1], "x": [B1]})
     assert fp.meta["stoplist"]["dropped"]["decidebench"] == 0
     assert overlaps_any(dec(1, f"Intro. {eight} outro."), fp) == "decidebench"
+
+
+# --- Fix round 4: fully stoplisted items rescued, short items behind a prefix or in quotes -------
+
+def test_item_made_entirely_of_shared_grams_still_caught_verbatim():
+    fp = build_benchmark_fingerprints({"x": [STOCK], "y": [f"Other text entirely here. {STOCK}"]})
+    assert fp.meta["stoplist"]["rescued_items"]["x"] == 1
+    assert overlaps_any(dec(1, f"Copied: {STOCK}."), fp) == "x"
+    # the rescued grams apply to x's item only: y's item (which keeps its own grams) is not hit by STOCK
+    assert fp.item_grams["y"][0] > 0
+
+
+def test_rescued_grams_do_not_apply_to_other_items():
+    items = [f"Case {i} reference {i * 7}. {STOCK}" for i in range(20)] + [STOCK]
+    fp = build_benchmark_fingerprints({"x": items})
+    rescued = [its for its in fp.grams["x"].values() if 20 in its]
+    assert len(rescued) == 3 and all(its == [20] for its in rescued)
+    assert fp.meta["stoplist"]["rescued_items"]["x"] == 1
+
+
+def test_short_item_behind_label_prefix_drops():
+    fp = build_benchmark_fingerprints({"intents": ["what happened to my top up"]})
+    assert overlaps_any(dec(1, "Customer message: what happened to my top up"), fp) == "intents"
+    assert overlaps_any(dec(2, "Ticket 12\nUser: What happened to my top-up?"), fp) == "intents"
+    assert overlaps_any(dec(3, "Context line.\nwhat happened to my top up\nMore."), fp) == "intents"
+    # 4-5 token items have no containment check, so only the line/prefix/quote candidates catch them
+    fp4 = build_benchmark_fingerprints({"intents": ["Where is my refund?"]})
+    assert overlaps_any(dec(4, "Customer message: where is my refund"), fp4) == "intents"
+    assert overlaps_any(dec(5, "Ticket 12\nCustomer Support Chat User: Where is my refund?"), fp4) == "intents"
+    assert overlaps_any(dec(6, "Ticket 12\nwhere is my refund\nend"), fp4) == "intents"
+    assert overlaps_any(dec(7, "Customer asked where is my refund today"), fp4) is None
+
+
+def test_short_item_in_quotes_drops():
+    fp = build_benchmark_fingerprints({"intents": ["what happened to my top up"]})
+    assert overlaps_any(dec(1, 'The customer wrote "what happened to my top up" and left.'), fp) == "intents"
+    assert overlaps_any(dec(2, "The customer wrote “What happened to my top up?” yesterday."), fp) == "intents"
+    fp4 = build_benchmark_fingerprints({"intents": ["Where is my refund?"]})
+    assert overlaps_any(dec(3, 'They said "where is my refund" twice.'), fp4) == "intents"
+    assert overlaps_any(dec(4, "They said “Where is my refund?” twice."), fp4) == "intents"
+
+
+def test_three_token_item_inside_ordinary_sentence_not_dropped():
+    fp = build_benchmark_fingerprints({"intents": ["check my balance"]})
+    assert overlaps_any(dec(1, "Customer wants to check my balance today."), fp) is None
+    assert overlaps_any(dec(2, "Note: I want to check my balance"), fp) is None
+    assert overlaps_any(dec(3, "Customer message: check my balance"), fp) == "intents"
+
+
+def test_one_and_two_token_lines_do_not_match_short_items():
+    fp = build_benchmark_fingerprints({"intents": ["Regards", "yes please", "Thanks!"]})
+    assert overlaps_any(dec(1, "Hello team,\nThe report is attached.\nRegards,\nAnna"), fp) is None
+    assert overlaps_any(dec(2, 'Comment: yes please'), fp) is None
+    assert overlaps_any(dec(3, "thanks"), fp) == "intents"  # the whole state still matches at any length

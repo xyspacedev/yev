@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,13 @@ STOP_MIN_ITEMS = 20
 # SHORT_CONTAINED_MIN tokens also match inside longer states as a whole-token run.
 SHORT_EXACT_MAX = 9
 SHORT_CONTAINED_MIN = 6
+# The exact check runs on the whole state, each line, each line after a leading "<label>:" of up to
+# 4 words ("Customer message: ...", "User: ..."), and each double-quoted span (straight or curly).
+LABEL_PREFIX_RE = re.compile(r"^\s*(?:[^\s:]+\s+){0,3}[^\s:]+\s*:\s*(.*)$")
+# Line, label-stripped and quoted spans count only from this many tokens: one- and two-token lines such
+# as "Regards," or "false" equal CLINC150 items but are not overlaps. The whole state has no floor.
+SPAN_MIN_TOKENS = 3
+QUOTED_RE = re.compile(r'"([^"\n]+)"|\u201c([^\u201d\n]+)\u201d')
 # A row overlaps a benchmark when it shares this many distinct 8-grams with one single item of it, or
 # all of that item's kept 8-grams when it has fewer (items of 8-9 tokens, or mostly stoplisted) ...
 ITEM_MIN_SHARED = 3
@@ -192,6 +200,7 @@ def build_benchmark_fingerprints(sources: dict[str, list[str]], meta: dict | Non
     grams: dict[str, dict[int, list[int]]] = {}
     dropped: dict[str, int] = {}
     item_grams: dict[str, list[int]] = {}
+    rescued: dict[str, int] = {}
     for name, owners in owners_by.items():
         if name in STRICT_BENCHMARKS:
             grams[name] = owners
@@ -199,6 +208,22 @@ def build_benchmark_fingerprints(sources: dict[str, list[str]], meta: dict | Non
             grams[name] = {h: its for h, its in owners.items()
                            if len(its) < STOP_MIN_ITEMS and n_benchmarks[h] < STOP_MIN_BENCHMARKS}
         dropped[name] = len(owners) - len(grams[name])
+        # An item that would lose every gram to the stoplist keeps them all, for itself only.
+        had = [0] * items[name]
+        for its in owners.values():
+            for i in its:
+                had[i] += 1
+        kept = [0] * items[name]
+        for its in grams[name].values():
+            for i in its:
+                kept[i] += 1
+        lost_all = {i for i in range(items[name]) if had[i] and not kept[i]}
+        for h, its in owners.items():
+            mine = [i for i in its if i in lost_all]
+            if mine:
+                grams[name].setdefault(h, [])
+                grams[name][h] = sorted(set(grams[name][h]) | set(mine))
+        rescued[name] = len(lost_all)
         per_item = [0] * items[name]
         for its in grams[name].values():
             for i in its:
@@ -209,11 +234,31 @@ def build_benchmark_fingerprints(sources: dict[str, list[str]], meta: dict | Non
     meta["item_min_shared"] = ITEM_MIN_SHARED
     meta["thresholds"] = thresholds
     meta["stoplist"] = {"min_benchmarks": STOP_MIN_BENCHMARKS, "min_items": STOP_MIN_ITEMS,
-                        "exempt": sorted(STRICT_BENCHMARKS), "dropped": dropped}
+                        "exempt": sorted(STRICT_BENCHMARKS), "dropped": dropped, "rescued_items": rescued}
     meta["short_items"] = {"exact_max_tokens": SHORT_EXACT_MAX, "contained_min_tokens": SHORT_CONTAINED_MIN,
                            "counts": {n: sum(len(v) for v in sh.values()) for n, sh in short.items()}}
     return BenchmarkFingerprints(grams=grams, items=items, thresholds=thresholds, item_grams=item_grams,
                                  meta=meta, short=short)
+
+
+def _exact_candidates(state: str) -> set[tuple[int, int]]:
+    """(token count, hash) of every short span the exact check compares with short items."""
+    out = set()
+    tokens = normalize_tokens(state)
+    if 0 < len(tokens) <= SHORT_EXACT_MAX:
+        out.add((len(tokens), gram_hash(tuple(tokens))))
+    texts = []
+    for line in state.splitlines():
+        texts.append(line)
+        m = LABEL_PREFIX_RE.match(line)
+        if m:
+            texts.append(m.group(1))
+    texts += [a or b for a, b in QUOTED_RE.findall(state)]
+    for t in texts:
+        tokens = normalize_tokens(t)
+        if SPAN_MIN_TOKENS <= len(tokens) <= SHORT_EXACT_MAX:
+            out.add((len(tokens), gram_hash(tuple(tokens))))
+    return out
 
 
 def overlaps_any(d: Decision, bfp: BenchmarkFingerprints) -> str | None:
@@ -221,8 +266,9 @@ def overlaps_any(d: Decision, bfp: BenchmarkFingerprints) -> str | None:
 
     The row overlaps benchmark B when its text (state, question and options) shares, with one single
     item of B, at least min(B's threshold, that item's kept 8-gram count) distinct 8-grams
-    (ITEM_MIN_SHARED; 1 for DecideBench); or when its normalised state equals an item of B of at most
-    SHORT_EXACT_MAX tokens; or contains an item of SHORT_CONTAINED_MIN..NGRAM-1 tokens as a
+    (ITEM_MIN_SHARED; 1 for DecideBench); or when an item of B of at most SHORT_EXACT_MAX tokens
+    equals the normalised state, one of its lines (with or without a leading "<label>:" of up to 4
+    words) or a double-quoted span in it (spans of SPAN_MIN_TOKENS or more); or contains an item of SHORT_CONTAINED_MIN..NGRAM-1 tokens as a
     whole-token run.
     """
     names = bfp.names()
@@ -247,11 +293,11 @@ def overlaps_any(d: Decision, bfp: BenchmarkFingerprints) -> str | None:
                     break
     if any(bfp.short.values()):
         state = normalize_tokens(d.state)
-        whole = gram_hash(tuple(state)) if 0 < len(state) <= SHORT_EXACT_MAX else None
+        wholes = _exact_candidates(d.state)
         runs = {n: _run_hashes(state, n) for n in range(SHORT_CONTAINED_MIN, NGRAM)}
         for b, name in enumerate(names):
             by_len = bfp.short.get(name, {})
-            if whole is not None and whole in by_len.get(len(state), ()):
+            if any(h in by_len.get(n, ()) for n, h in wholes):
                 hits.add(b)
             elif any(not runs[n].isdisjoint(hs) for n, hs in by_len.items() if SHORT_CONTAINED_MIN <= n < NGRAM):
                 hits.add(b)
