@@ -10,6 +10,11 @@ SSH=(ssh -i "$JEFF_TRAIN_KEY")
 
 git archive HEAD | "${SSH[@]}" "$JEFF_TRAIN_HOST" 'mkdir -p ~/jeff && tar -x -C ~/jeff'
 
+# The archive has no .git: record the revision so metrics.json / train_summary.json can carry it.
+GIT_SHA="$(git rev-parse HEAD)"
+[ -z "$(git status --porcelain)" ] || GIT_SHA="$GIT_SHA-dirty"
+"${SSH[@]}" "$JEFF_TRAIN_HOST" "printf '%s\\n' '$GIT_SHA' > ~/jeff/GIT_SHA"
+
 # Only the Stage 0 mix, the dev examples and data/bench go over; nothing else under data/.
 "${SSH[@]}" "$JEFF_TRAIN_HOST" 'mkdir -p ~/jeff/data/mix/stage0 ~/jeff/data/dev'
 rsync -az -e "ssh -i \"$JEFF_TRAIN_KEY\"" data/mix/stage0/ "$JEFF_TRAIN_HOST:jeff/data/mix/stage0/"

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import torch
 
+from jeff import provenance
 from jeff.train import losses as L
 from jeff.train.data import N_MAX, build_batches, encode_all, letter_token_ids, load_rows, subsample_units
 from jeff.train.infer import logits_at
@@ -270,6 +271,8 @@ def train(cfg: TrainConfig, tokenizer=None, model=None) -> dict:
     secs = time.time() - t0
     summary = {"steps": step, "tokens": tokens, "seconds": secs, "tokens_per_s": tokens / max(secs, 1e-9),
                "encode_stats": stats, "resumed_from": resumed_from, "epochs": epochs, "n_batches": len(batches),
-               "total_steps": total_steps}
+               "total_steps": total_steps,
+               "git_sha": provenance.git_sha(), "train_path": cfg.train_path,
+               "train_sha256": provenance.file_sha256(cfg.train_path)}
     (out / "train_summary.json").write_text(json.dumps(summary, indent=2))
     return summary

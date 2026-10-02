@@ -21,6 +21,7 @@ def _items():
 
 def test_bench_score_writes_predictions_and_metrics(tmp_path, monkeypatch, tok, tiny_model):
     monkeypatch.setattr(infer, "load", lambda m, b: (tok, tiny_model))
+    monkeypatch.setattr(cli, "BENCH_DIR", tmp_path / "bench")
     test, ex = _items()
     d = tmp_path / "decidebench"
     rows = B.convert(test, ex)
@@ -112,13 +113,42 @@ def test_bench_score_skip_overlong_records_ids(tmp_path, monkeypatch, tok, tiny_
     assert ids == ["rjudge:IoT/home:1", "rjudge:IoT/home:3"]
 
 
-def test_eval_still_truncates_rather_than_refusing(tmp_path, monkeypatch, tok, tiny_model, make_row):
-    """jeff eval keeps infer.py's keep-the-last-max-len-tokens behaviour (dev results stay comparable)."""
-    monkeypatch.setattr(infer, "load", lambda m, b: (tok, tiny_model))
+def _long_data(tmp_path, make_row):
     data = tmp_path / "d.chat.jsonl"
-    data.write_text(json.dumps(make_row("r0", {"A": "x", "B": "y"}, "A", state="w " * 300)) + "\n")
-    assert cli.main(["eval", "--model", "m", "--data", str(data), "--out", str(tmp_path / "r.json"),
-                     "--max-len", "50"]) == 0
+    data.write_text("".join(json.dumps(r) + "\n" for r in [
+        make_row("r0", {"A": "x", "B": "y"}, "A"),
+        make_row("r1", {"A": "x", "B": "y"}, "A", state="w " * 300),
+        make_row("r2", {"A": "x", "B": "y"}, "B")]))
+    return data
+
+
+def test_eval_refuses_overlong_rows(tmp_path, monkeypatch, tok, tiny_model, make_row, capsys):
+    monkeypatch.setattr(infer, "load", lambda m, b: (tok, tiny_model))
+    rep = tmp_path / "r.json"
+    assert cli.main(["eval", "--model", "m", "--data", str(_long_data(tmp_path, make_row)), "--out", str(rep),
+                     "--max-len", "100"]) == 2
+    msg = capsys.readouterr().out
+    assert "1 rows are longer than --max-len 100" in msg and "r1" in msg and not rep.exists()
+
+
+def test_eval_skip_overlong_records_ids(tmp_path, monkeypatch, tok, tiny_model, make_row):
+    monkeypatch.setattr(infer, "load", lambda m, b: (tok, tiny_model))
+    rep = tmp_path / "r.json"
+    assert cli.main(["eval", "--model", "m", "--data", str(_long_data(tmp_path, make_row)), "--out", str(rep),
+                     "--max-len", "100", "--skip-overlong"]) == 0
+    r = json.loads(rep.read_text())
+    assert r["run"]["n_skipped_overlong"] == 1 and r["run"]["skipped_overlong_ids"] == ["r1"]
+
+
+def test_calibrate_refuses_and_skips_overlong(tmp_path, monkeypatch, tok, tiny_model, make_row, capsys):
+    monkeypatch.setattr(infer, "load", lambda m, b: (tok, tiny_model))
+    data, cal = _long_data(tmp_path, make_row), tmp_path / "cal.json"
+    base = ["calibrate", "--model", "m", "--data", str(data), "--out", str(cal), "--max-len", "100"]
+    assert cli.main(base) == 2
+    assert "r1" in capsys.readouterr().out and not cal.exists()
+    assert cli.main(base + ["--skip-overlong"]) == 0
+    c = json.loads(cal.read_text())
+    assert c["n"] == 2 and c["skipped_overlong_ids"] == ["r1"] and c["n_skipped_overlong"] == 1
 
 
 def test_decidebench_is_scored_once_unless_forced(tmp_path, monkeypatch, tok, tiny_model, capsys):
@@ -127,8 +157,15 @@ def test_decidebench_is_scored_once_unless_forced(tmp_path, monkeypatch, tok, ti
     rows = tmp_path / "rows_zeroshot.chat.jsonl"
     write_rows(rows, B.convert(test, ex)["zeroshot"])
     out = tmp_path / "o"
+    monkeypatch.setattr(cli, "BENCH_DIR", tmp_path / "bench")
     args = ["bench", "score", "--name", "decidebench", "--model", "m", "--rows", str(rows), "--out", str(out)]
     assert cli.main(args) == 0
+    assert (tmp_path / "bench/decidebench/.scored-zeroshot").exists()
+    # deleting metrics.json (or using another --out) does not bypass the sentinel
+    (out / "metrics.json").unlink()
+    assert cli.main(args) == 2
+    assert cli.main(args[:-1] + [str(tmp_path / "o2")]) == 2
+    assert cli.main(args + ["--force"]) == 0
     (out / "metrics.json").write_text('{"first": true}')
     assert cli.main(args) == 2
     assert "scored once" in capsys.readouterr().out

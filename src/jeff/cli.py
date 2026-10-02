@@ -51,13 +51,8 @@ def _write_stats_atomically(stats_path: Path, all_stats: dict) -> None:
 
 
 def _git_sha() -> str | None:
-    try:
-        res = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parent,
-                             capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    sha = res.stdout.strip()
-    return sha if res.returncode == 0 and sha else None
+    from jeff import provenance
+    return provenance.git_sha()
 
 
 def cmd_build_public(args: argparse.Namespace) -> int:
@@ -433,28 +428,52 @@ def cmd_synth_attrib_score(args) -> int:
     return 0
 
 
-def _letter_logits_for(args) -> tuple[list[dict], list[list[float]]]:
+def _letter_logits_for(args) -> tuple[list[dict], list[list[float]], list[str]] | None:
+    """Rows kept, their letter logits, and the skipped over-long ids; None when over-long rows are refused."""
     from jeff.train import infer
     from jeff.train.data import load_rows
     rows = load_rows(args.data)
     tok, model = infer.load(args.model, args.base)
-    return rows, infer.letter_logits(model, tok, rows, max_len=args.max_len, batch_tokens=args.batch_tokens)
+    overlong = _overlong_ids(tok, rows, args.max_len)
+    if overlong and not args.skip_overlong:
+        print(f"error: {len(overlong)} rows are longer than --max-len {args.max_len} tokens "
+              f"(e.g. {', '.join(overlong[:5])}); raise --max-len or pass --skip-overlong")
+        return None
+    skip = set(overlong)
+    rows = [r for r in rows if r["id"] not in skip]
+    return rows, infer.letter_logits(model, tok, rows, max_len=args.max_len, batch_tokens=args.batch_tokens), overlong
 
 
 def cmd_train(args) -> int:
     from jeff.train.trainer import TrainConfig, train
-    print(json.dumps(train(TrainConfig.from_json(args.config)), indent=2))
+    cfg = TrainConfig.from_json(args.config)
+    out = Path(cfg.out_dir)
+    if not args.force and (out / "final").exists() and (out / "train_summary.json").exists():
+        try:
+            done = json.loads((out / "train_summary.json").read_text())
+        except ValueError:
+            done = {}
+        if done.get("steps") is not None and done.get("steps") == done.get("total_steps"):
+            print(f"{out} already holds a finished run ({done['steps']}/{done['total_steps']} steps); "
+                  "nothing touched (pass --force to train again)")
+            return 0
+    print(json.dumps(train(cfg), indent=2))
     return 0
 
 
 def cmd_eval(args) -> int:
     from jeff.train import metrics, readout
     temps = json.loads(Path(args.calibration).read_text())["temperatures"] if args.calibration else {}
-    rows, logits = _letter_logits_for(args)
+    got = _letter_logits_for(args)
+    if got is None:
+        return 2
+    rows, logits, overlong = got
     preds = [{**{k: r.get(k) for k in ("id", "type", "family", "edit_type", "source", "cluster_id", "letters", "answer")},
               "probs": readout.probs(z, n=len(r["letters"]), temperature=temps.get(r["type"], 1.0))}
              for r, z in zip(rows, logits)]
     report = metrics.evaluate(preds)
+    report["run"] = {"model": args.model, "data": args.data, "max_len": args.max_len,
+                     "n_skipped_overlong": len(overlong), "skipped_overlong_ids": overlong}
     _write_json(Path(args.out), report)
     print(json.dumps(report, indent=2))
     return 0
@@ -463,12 +482,16 @@ def cmd_eval(args) -> int:
 def cmd_calibrate(args) -> int:
     from jeff.format import LETTERS
     from jeff.train.calibrate import fit_temperatures, write_calibration
-    rows, logits = _letter_logits_for(args)
+    got = _letter_logits_for(args)
+    if got is None:
+        return 2
+    rows, logits, overlong = got
     items = [{"type": r["type"], "logits": z, "n": len(r["letters"]), "answer_index": LETTERS.index(r["answer"])}
              for r, z in zip(rows, logits)]
     temps = fit_temperatures(items)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    write_calibration(args.out, temps, {"model": args.model, "data": args.data, "n": len(items)})
+    write_calibration(args.out, temps, {"model": args.model, "data": args.data, "n": len(items),
+                                              "n_skipped_overlong": len(overlong), "skipped_overlong_ids": overlong})
     print(json.dumps(temps))
     return 0
 
@@ -506,10 +529,14 @@ def cmd_bench_score(args) -> int:
     from jeff.bench.common import META_FILE, read_rows
     from jeff.train import infer
     out = Path(args.out)
-    if args.name == "decidebench" and (out / "metrics.json").exists() and not args.force:
-        print(f"error: {out / 'metrics.json'} exists; the DecideBench test is scored once (pass --force to rerun)")
-        return 2
     rows_path = Path(args.rows)
+    sentinel = None
+    if args.name == "decidebench":
+        sentinel = BENCH_DIR / "decidebench" / f".scored-{_bench_variant(rows_path) or 'unknown'}"
+        for guard in (out / "metrics.json", sentinel):
+            if guard.exists() and not args.force:
+                print(f"error: {guard} exists; the DecideBench test is scored once (pass --force to rerun)")
+                return 2
     rows = read_rows(rows_path)
     temps = json.loads(Path(args.calibration).read_text())["temperatures"] if args.calibration else {}
     tok, model = infer.load(args.model, args.base)
@@ -537,6 +564,9 @@ def cmd_bench_score(args) -> int:
     (out / "predictions.jsonl").write_text(
         "".join(json.dumps({k: p[k] for k in keep}, ensure_ascii=False) + "\n" for p in preds), encoding="utf-8")
     _write_json(out / "metrics.json", report)
+    if sentinel is not None:
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        sentinel.write_text(json.dumps({"out": str(out), "git_sha": _git_sha()}) + "\n")
     print(json.dumps({k: v for k, v in report.items() if k not in ("reference", "by_family", "by_category")}, indent=2))
     return 0
 
@@ -626,6 +656,7 @@ def make_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("train", help="Stage 0 LoRA training from a JSON config")
     p.add_argument("--config", required=True)
+    p.add_argument("--force", action="store_true", help="train even if out_dir already holds a finished run")
     p.set_defaults(func=cmd_train)
     for name, func, hlp in [("eval", cmd_eval, "dev metrics for a trained model"),
                             ("calibrate", cmd_calibrate, "fit per-type temperatures")]:
@@ -636,6 +667,8 @@ def make_parser() -> argparse.ArgumentParser:
         p.add_argument("--out", required=True)
         p.add_argument("--max-len", type=int, default=4096)
         p.add_argument("--batch-tokens", type=int, default=16384)
+        p.add_argument("--skip-overlong", action="store_true",
+                       help="leave rows longer than --max-len out (ids recorded in the output JSON); default is an error")
         if name == "eval":
             p.add_argument("--calibration", help="calibration JSON from jeff calibrate (default T=1)")
         p.set_defaults(func=func)

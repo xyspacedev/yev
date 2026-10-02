@@ -101,3 +101,34 @@ def test_sync_pushes_only_mix_dev_examples_and_bench():
     t = (Path("scripts/aws") / "sync.sh").read_text()
     sources = re.findall(r"^\s*rsync .*\"\" (data/\S*) ", t, re.M)
     assert sources == ["data/mix/stage0/", "data/dev/decidebench_examples.jsonl", "data/bench/"]
+
+
+def _sync_repo(tmp_path, env):
+    repo = tmp_path / "repo"
+    (repo / "scripts/aws").mkdir(parents=True)
+    (repo / "scripts/aws/sync.sh").write_text(Path("scripts/aws/sync.sh").read_text())
+    (repo / "data/mix/stage0").mkdir(parents=True)
+    (repo / "data/mix/stage0/x").write_text("x")
+    (repo / "data/dev").mkdir()
+    (repo / "data/dev/decidebench_examples.jsonl").write_text("{}")
+    rsync = tmp_path / "bin/rsync"
+    rsync.write_text("#!/bin/sh\nexit 0\n")
+    rsync.chmod(0o755)
+    genv = {**env, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_GLOBAL": "/dev/null"}
+    for cmd in (["init", "-q"], ["add", "-A"], ["commit", "-qm", "c"]):
+        subprocess.run(["git", *cmd], cwd=repo, env=genv, check=True)
+    return repo, genv
+
+
+def test_sync_records_git_sha_on_box(tmp_path):
+    home, env = _fake_env(tmp_path)
+    repo, genv = _sync_repo(tmp_path, env)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    r = subprocess.run(["bash", "scripts/aws/sync.sh"], cwd=repo, env=genv, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert (home / "jeff/GIT_SHA").read_text() == head + "\n"
+    (repo / "dirty.txt").write_text("x")  # untracked file makes the tree dirty
+    r = subprocess.run(["bash", "scripts/aws/sync.sh"], cwd=repo, env=genv, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert (home / "jeff/GIT_SHA").read_text() == head + "-dirty\n"

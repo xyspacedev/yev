@@ -513,8 +513,8 @@ accuracy, then Opus-holdout accuracy.
 | Negation | 97.3 % | 150 |
 | Entity swap | 96.9 % | 194 |
 | Quantifier | 94.7 % | 19 |
-| Unit | 88.9 % | 27 |
 | Date | 90.0 % | 180 |
+| Unit | 88.9 % | 27 |
 | Injection | 7 / 7 | 7 |
 | No edit | 92.5 % | 993 |
 

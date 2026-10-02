@@ -46,3 +46,33 @@ def test_stage0_configs_load():
     for p in root.glob("*.json"):
         c = TrainConfig.from_json(str(p))
         assert c.name == p.stem and c.out_dir == f"/home/ubuntu/runs/{c.name}" and c.lambda_rps == 0.5
+
+
+def test_train_skips_finished_run_unless_forced(tmp_path, monkeypatch, capsys):
+    from jeff.train import trainer
+    out = tmp_path / "out"
+    (out / "final").mkdir(parents=True)
+    summ = out / "train_summary.json"
+    summ.write_text(json.dumps({"steps": 5, "total_steps": 5}))
+    cfg = tmp_path / "c.json"
+    cfg.write_text(json.dumps({"name": "x", "model_path": "m", "train_path": "t", "out_dir": str(out)}))
+    calls = []
+    monkeypatch.setattr(trainer, "train", lambda c: calls.append(c) or {"steps": 9})
+    assert cli.main(["train", "--config", str(cfg)]) == 0
+    assert calls == [] and "already holds a finished run" in capsys.readouterr().out
+    assert json.loads(summ.read_text()) == {"steps": 5, "total_steps": 5}
+    assert cli.main(["train", "--config", str(cfg), "--force"]) == 0 and len(calls) == 1
+    summ.write_text(json.dumps({"steps": 3, "total_steps": 5}))  # unfinished: trains (resumes)
+    assert cli.main(["train", "--config", str(cfg)]) == 0 and len(calls) == 2
+
+
+def test_git_sha_falls_back_to_file(tmp_path, monkeypatch):
+    from jeff import provenance
+    monkeypatch.setattr(provenance, "REPO_ROOT", tmp_path)
+    (tmp_path / "GIT_SHA").write_text("abc123-dirty\n")
+    def no_git(*a, **k):
+        raise FileNotFoundError("git")
+    monkeypatch.setattr(provenance.subprocess, "run", no_git)
+    assert cli._git_sha() == "abc123-dirty"
+    (tmp_path / "GIT_SHA").unlink()
+    assert cli._git_sha() is None

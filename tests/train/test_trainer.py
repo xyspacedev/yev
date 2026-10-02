@@ -19,6 +19,10 @@ def test_train_runs_and_loss_is_finite(tmp_path, tok, tiny_model, make_row):
     out = train(cfg(tmp_path, lambda_pair=0.5, lambda_perm=0.2, twin_rate=0.5), tokenizer=tok, model=tiny_model)
     assert out["steps"] > 0 and out["tokens"] > 0
     assert (tmp_path / "out" / "final").exists()
+    import hashlib
+    saved = json.loads((tmp_path / "out" / "train_summary.json").read_text())
+    assert saved["train_sha256"] == hashlib.sha256((tmp_path / "train.jsonl").read_bytes()).hexdigest()
+    assert "git_sha" in saved and saved["train_path"] == str(tmp_path / "train.jsonl")
 
 def test_resume_continues_step_and_order(tmp_path, tok, tiny_model, make_row):
     write_rows(tmp_path / "train.jsonl", make_row)
