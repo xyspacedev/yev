@@ -20,6 +20,8 @@ jeff serve --model runs/yev-4b/adapter --base /models/Qwen3-4B-Base \
 | `--model-name` | `yev-4b` | Name reported in responses and `/v1/models`. The `model` a client sends is ignored. |
 | `--max-len` | `16384` | A request with a longer prompt (in tokens) is refused with 422; prompts are never truncated |
 | `--batch-tokens` | `16384` | Token budget per forward batch when a request carries several questions |
+| `--no-prefix-cache` | cache on | Re-read the shared state for every question (the exact path; use to rule the cache out) |
+| `--min-prefix-tokens` | `256` | Shortest shared prompt prefix, in tokens, that uses the prefix KV cache |
 
 Other endpoints: `GET /health` (`{"status": "ok", "model": ...}`), `GET /v1/models`. No authentication is checked, so any
 `Authorization` header is accepted. Bind to loopback or put it behind your own proxy.
@@ -30,6 +32,17 @@ Each question becomes one chat row in the training format: the state, the instru
 in key order. The model's next-token logits over the option letters, divided by the calibrated temperature and
 softmaxed, are the probabilities. Nothing is generated (`output_tokens` is always 0). One forward pass per question; a
 request with several questions is batched up to `--batch-tokens`.
+
+**Prefix KV cache.** All questions of a request share the system prompt, the chat header and the state, and
+diverge at the question. When a request has at least two questions and their prompts share at least
+`--min-prefix-tokens` leading tokens, that prefix is run once and every question continues from a copy of its cache
+(the full-attention keys/values and the Gated DeltaNet conv/recurrent states), so a 9k-token invoice with 42 questions
+reads the invoice once instead of 42 times. Suffix batches hold at most 16 questions and at most `--batch-tokens`
+suffix tokens; the shared prefix is not counted against the budget. For yev-4b the cache costs about 32 KB per
+token per question in the batch (8 full-attention layers), so 16 questions over a 9k-token state need about 5 GB on top
+of the model. Single-question requests and shorter prefixes use the exact uncached path, unchanged. The two paths agree
+to within 1e-4 on the CPU test models; on the GPU the chunked linear-attention kernels can differ slightly, which
+`scripts/serve_parity.py` measures on real requests (`--no-prefix-cache` turns the cache off).
 
 - **noul** has two options, yes first and no second, always. `criteria.true` / `criteria.false` are the descriptions
   when given. The answer is `noul` = P(yes).
@@ -121,8 +134,8 @@ count an error instead of an unsupported row.
 - **Score:** levels are served as the numeric keys `"0"`..`"n-1"`, while most training Score rows used named levels.
   Expect Score probabilities to be less well calibrated than Noul and Choice, and check them on your workflow.
 - **Noul** is always served yes-first (A = yes), so a client's `true`/`false` descriptions never reorder it.
-- **Speed:** the transformers backend has no prefix KV cache, so questions that share one long state re-encode it each time.
-  A vLLM backend with prefix caching is future work. One forward pass per question.
+- **Speed:** a request's shared state is encoded once (prefix KV cache, above); each question then costs one forward pass
+  over its own suffix. The cache lives for one request only: two requests with the same state each encode it.
 - **Calibration:** without `--calibration` temperatures are 1. Pass the file produced by `jeff calibrate` for the model.
 
 ## Callers

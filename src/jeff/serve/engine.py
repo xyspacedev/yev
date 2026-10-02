@@ -5,6 +5,10 @@ Each question is one chat row (``jeff.serve.mapping.to_rows``). All rows of a re
 letters any row has. Each row's probabilities are then a temperature softmax over its own letters
 only (``jeff.train.readout.probs``), so an answer does not depend on its batch mates.
 
+A request with at least two questions whose prompts share at least ``min_prefix_tokens`` leading
+tokens (the state) reads that prefix once and continues each question from a copy of its KV cache
+(``jeff.serve.prefix``); ``prefix_cache=False`` or a shorter prefix uses the exact path above.
+
 A request is refused whole, before any forward pass, if a question is unsupported or a prompt is
 longer than ``max_len`` tokens. Prompts are never truncated.
 """
@@ -18,6 +22,7 @@ from typing import Any, Mapping
 
 from jeff.format import LETTERS
 from jeff.serve.mapping import MAX_LETTERS, NOUL_NO, NOUL_YES, Unsupported, to_answers, to_rows
+from jeff.serve.prefix import common_prefix_len, prefix_letter_logits
 from jeff.train import readout
 from jeff.train.data import letter_token_ids, prompt_ids
 from jeff.train.infer import letter_logits
@@ -74,7 +79,8 @@ def _labels(messages: list[dict]) -> list[str]:
 
 class Engine:
     def __init__(self, model_dir: str, base: str | None, calibration: str | None,
-                 max_len: int = 16384, batch_tokens: int = 16384, *, model=None, tokenizer=None):
+                 max_len: int = 16384, batch_tokens: int = 16384, *, model=None, tokenizer=None,
+                 prefix_cache: bool = True, min_prefix_tokens: int = 256):
         if (model is None) != (tokenizer is None):
             raise ValueError("pass both model and tokenizer, or neither")
         if model is None:
@@ -85,6 +91,7 @@ class Engine:
         self.model, self.tokenizer = model, tokenizer
         self.temperatures = load_temperatures(calibration)
         self.max_len, self.batch_tokens = max_len, batch_tokens
+        self.prefix_cache, self.min_prefix_tokens = prefix_cache, min_prefix_tokens
         self._lock = threading.Lock()  # one forward pass at a time on the one model
 
     def temperature(self, type_: str) -> float:
@@ -93,22 +100,37 @@ class Engine:
     def n_tokens(self, messages) -> int:
         return len(prompt_ids(self.tokenizer, [_message(m) for m in messages]))
 
+    def _checked_ids(self, rows: list[dict]) -> list[list[int]]:
+        ids = [prompt_ids(self.tokenizer, r["messages"]) for r in rows]
+        longest = max(len(x) for x in ids)
+        if longest > self.max_len:
+            raise too_long(longest, self.max_len)
+        return ids
+
     def _checked_lengths(self, rows: list[dict]) -> list[int]:
-        lengths = [self.n_tokens(r["messages"]) for r in rows]
-        if max(lengths) > self.max_len:
-            raise too_long(max(lengths), self.max_len)
-        return lengths
+        return [len(x) for x in self._checked_ids(rows)]
 
     def _logits(self, rows: list[dict], n_letters: int) -> list[list[float]]:
         with self._lock:
             return letter_logits(self.model, self.tokenizer, rows, max_len=self.max_len,
                                  batch_tokens=self.batch_tokens, n_letters=n_letters)
 
+    def _request_logits(self, rows: list[dict], ids: list[list[int]], n_letters: int) -> list[list[float]]:
+        """The prefix-cached readout when it applies (2+ questions, a long shared prefix), else the exact one."""
+        P = common_prefix_len(ids) if self.prefix_cache and len(rows) >= 2 else 0
+        if P < max(self.min_prefix_tokens, 1):
+            return self._logits(rows, n_letters)
+        with self._lock:
+            return prefix_letter_logits(self.model, ids[0][:P], [x[P:] for x in ids],
+                                        letter_token_ids(self.tokenizer, n_letters), self.batch_tokens,
+                                        pad_id=getattr(self.tokenizer, "pad_token_id", 0) or 0)
+
     def answer(self, state: Any, questions: Mapping[str, Any]) -> tuple[dict, dict]:
         """Wire answers keyed by question name, and the response's ``usage``."""
         rows = to_rows(state, questions)
-        lengths = self._checked_lengths(rows)
-        logits = self._logits(rows, max(len(r["letters"]) for r in rows))
+        ids = self._checked_ids(rows)
+        lengths = [len(x) for x in ids]
+        logits = self._request_logits(rows, ids, max(len(r["letters"]) for r in rows))
         probs = [readout.probs(z, len(r["letters"]), self.temperature(r["type"])) for r, z in zip(rows, logits)]
         return to_answers(questions, rows, probs), {"input_tokens": sum(lengths), "output_tokens": 0}
 

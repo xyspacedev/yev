@@ -468,7 +468,8 @@ def cmd_serve(args) -> int:
     from jeff.serve.engine import Engine
 
     engine = Engine(args.model, args.base, args.calibration, max_len=args.max_len,
-                    batch_tokens=args.batch_tokens)
+                    batch_tokens=args.batch_tokens, prefix_cache=args.prefix_cache,
+                    min_prefix_tokens=args.min_prefix_tokens)
     uvicorn.run(create_app(engine, model_name=args.model_name), host=args.host, port=args.port)
     return 0
 
@@ -687,6 +688,10 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--max-len", type=int, default=16384, help="requests with a longer prompt are refused (422)")
     p.add_argument("--batch-tokens", type=int, default=16384)
+    p.add_argument("--no-prefix-cache", dest="prefix_cache", action="store_false",
+                   help="re-read the shared state for every question (the exact, uncached path)")
+    p.add_argument("--min-prefix-tokens", type=int, default=256,
+                   help="shortest shared prompt prefix (tokens) that uses the prefix KV cache")
     p.add_argument("--model-name", default="yev-4b", help="model name reported in responses and /v1/models")
     p.set_defaults(func=cmd_serve)
     from jeff.bench import BENCHES
