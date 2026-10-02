@@ -17,11 +17,13 @@ from yev.generators.common import keep_valid_clusters, make_cluster
 from yev.generators.dates import STYLES, add_business_days, business_days, fmt, last_day_of_month
 from yev.schema import Decision, Option
 
-SOURCE = "rules:date_number_drills"
+SOURCE = "synthetic_rules"
 FAMILY = "date_number_drills"
 KINDS = ("deadline_met", "deadline_choice", "business_days", "sum_threshold", "pct_change")
 SLASH_NOTE = "Slash dates are written day/month/year."
 BUSINESS_NOTE = "Business days are Monday to Friday, excluding public holidays."
+# Every state with a day window says how the days are counted, with this phrase.
+COUNT_PHRASE = "counts as day 1"
 NOUL_OPTIONS = [Option("yes", "Yes."), Option("no", "No.")]
 
 
@@ -86,6 +88,11 @@ def unit_phrase(d: Deadline) -> str:
     return f"{d.n} {d.unit} day{'s' if d.n != 1 else ''}"
 
 
+def count_rule(d: Deadline, anchor: str) -> str:
+    first = "the day after" if d.unit == "calendar" else "the first business day after"
+    return f"{first} {anchor} {COUNT_PHRASE}"
+
+
 def swap_unit(d: Deadline) -> Deadline:
     return replace(d, unit="business" if d.unit == "calendar" else "calendar")
 
@@ -109,15 +116,17 @@ def render_deadline_met(tpl: int, ev: tuple, ref: str, other: date, styles: dict
     note = f" {BUSINESS_NOTE}" if d.unit == "business" else ""
     event, rule, finished, anchor = ev
     if tpl == 0:
-        text = (f"{event} on {S}. Under the terms, {rule} within {unit_phrase(d)} of that date.{note}{hol} "
+        text = (f"{event} on {S}. Under the terms, {rule} within {unit_phrase(d)} of that date, and "
+                f"{count_rule(d, 'that date')}.{note}{hol} "
                 f"{finished} on {X}. A reminder had been sent on {O}.")
     elif tpl == 1:
         text = (f"Case {ref} timeline:\n- {O}: account details updated\n- {S}: {event.lower()}\n- {X}: "
-                f"{finished.lower()}\nRule: {rule} no later than {unit_phrase(d)} after {anchor}."
+                f"{finished.lower()}\nRule: {rule} no later than {unit_phrase(d)} after {anchor}, "
+                f"and {count_rule(d, anchor)}."
                 f"{note}{hol}")
     else:
-        text = (f"Ops log {ref}. {finished} on {X}. {event} on {S}, and {rule} within {unit_phrase(d)}, "
-                f"counting from the day after.{note}{hol} The file was last audited on {O}.")
+        text = (f"Ops log {ref}. {finished} on {X}. {event} on {S}, and {rule} within {unit_phrase(d)}; "
+                f"{count_rule(d, 'that date')}.{note}{hol} The file was last audited on {O}.")
     return with_slash_note(text, st.values())
 
 
@@ -161,13 +170,13 @@ def render_deadline_choice(tpl: int, ref: str, side: date, styles: dict, d: Dead
     note = f" {BUSINESS_NOTE}" if d.unit == "business" else ""
     if tpl == 0:
         text = (f"Invoice {ref} is dated {S} and reached accounts payable on {Y}. Payment is due {unit_phrase(d)} "
-                f"from the invoice date.{note}{hol}")
+                f"from the invoice date, and {count_rule(d, 'the invoice date')}.{note}{hol}")
     elif tpl == 1:
         text = (f"Purchase order {ref}: goods accepted on {S}. The supplier's paperwork arrived on {Y}. The buyer "
-                f"must pay within {unit_phrase(d)} of acceptance.{note}{hol}")
+                f"must pay within {unit_phrase(d)} of acceptance; {count_rule(d, 'acceptance')}.{note}{hol}")
     else:
         text = (f"A formal notice was served on {S}, and a copy was emailed on {Y}. The recipient must reply "
-                f"within {unit_phrase(d)} of service.{note}{hol}")
+                f"within {unit_phrase(d)} of service, and {count_rule(d, 'service')}.{note}{hol}")
     return with_slash_note(text, st.values())
 
 
@@ -213,13 +222,16 @@ def render_business_days(tpl: int, ref: str, styles: dict, weekday: bool, a: dat
            or " There were no public holidays in this period.")
     if tpl == 0:
         text = (f"Ticket {ref} was opened on {A} and resolved on {B}.{hol} Business days are weekdays after the "
-                f"opening date, up to and including the resolution date, skipping public holidays.")
+                f"opening date, up to and including the resolution date, skipping public holidays; the first "
+                f"business day after opening {COUNT_PHRASE}.")
     elif tpl == 1:
         text = (f"Shipment {ref} was handed to the carrier on {A} and delivered on {B}.{hol} Transit time is "
-                f"counted in business days (Monday to Friday, holidays excluded), not counting the hand-over day.")
+                f"counted in business days (Monday to Friday, holidays excluded), not counting the hand-over day: "
+                f"the first business day after hand-over {COUNT_PHRASE}.")
     else:
         text = (f"Contractor timesheet {ref}: the engagement ran from the day after {A} through {B}.{hol} The "
-                f"contractor bills every weekday in that period except public holidays.")
+                f"contractor bills every weekday in that period except public holidays; the first billable weekday "
+                f"{COUNT_PHRASE}.")
     return with_slash_note(text, styles.values())
 
 
@@ -285,7 +297,7 @@ DOMAINS = (
               (50000, 100000, 150000, 250000), 1, money, "Expense claim {ref}:",
               "Claims above {t} need director approval.", "Claims of {t} or more need director approval.",
               "refunded by the vendor, not part of this claim", "Does this claim need director approval?"),
-    SumDomain(("suitcase", "duffel bag", "ski bag", "box of books", "golf bag"), (2300, 3200, 4600), 1,
+    SumDomain(("suitcase", "duffel bag", "ski bag", "box of books", "golf bag"), (230, 320, 460), 1,
               _decimal(10, "kg"), "Checked luggage for booking {ref}:",
               "The checked allowance is {t} in total; anything heavier is charged.",
               "A surcharge applies once the checked total reaches {t}.",

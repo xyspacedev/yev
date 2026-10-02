@@ -17,7 +17,7 @@ from yev.generators.common import keep_valid_clusters, make_cluster
 from yev.generators.dates import STYLES, elapsed_days, fmt, last_day_of_month
 from yev.schema import Decision, Option
 
-SOURCE = "rules:returns_v2"
+SOURCE = "synthetic_rules"
 FAMILY = "returns_v2"
 QUESTIONS = (
     "Following the returns policy in the text, how should this return request be resolved?",
@@ -86,7 +86,7 @@ def render_policy(tpl: int, shop: str, p: Policy) -> str:
         credit = (f"Requests that miss the refund terms but arrive within {c} days of {a} get store credit instead."
                   if c else "Anything outside the refund terms is declined; we do not issue store credit.")
         return (f"{shop} returns policy\n- Items returned within {w} days of {a} get a full refund{opened}.\n"
-                f"- {credit}\n- Day 1 is the day after {a}.\n- Final-sale items cannot be returned or exchanged.")
+                f"- {credit}\n- Day 1 is the day after {a}.\n- Nothing marked final sale can come back, whether for a refund or an exchange.")
     if tpl == 1:
         opened = ", even if you have opened it" if p.opened_ok else " as long as it has not been opened"
         credit = (f"If a return misses the refund terms, store credit is available as long as it is requested "

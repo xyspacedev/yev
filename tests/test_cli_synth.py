@@ -11,7 +11,7 @@ def test_gen_rules_writes_valid_clusters(tmp_path):
 
 
 def test_gen_rules_stage1_families(tmp_path):
-    for family, source in [("returns_v2", "rules:returns_v2"), ("date_number_drills", "rules:date_number_drills")]:
+    for family, source in [("returns_v2", "synthetic_rules"), ("date_number_drills", "synthetic_rules")]:
         out = tmp_path / f"{family}.jsonl"
         assert cli.main(["gen-rules", "--family", family, "--clusters", "6", "--seed", "3", "--out", str(out)]) == 0
         rows = list(read_jsonl(out))

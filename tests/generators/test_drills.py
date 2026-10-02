@@ -4,7 +4,9 @@ from fractions import Fraction
 
 from yev.generators.common import EDIT_TYPES, MAX_EDIT_TOKENS, token_edit_size
 from yev.generators.dates import fmt
-from yev.generators.drills import KINDS, generate
+import re
+
+from yev.generators.drills import COUNT_PHRASE, KINDS, generate
 
 
 def by_cluster(ds):
@@ -60,7 +62,7 @@ def test_drills_labels_computed():
     assert set(kinds) == set(KINDS) and min(kinds.values()) > 100, kinds
     for d in ds:
         d.validate()
-        assert d.family == "date_number_drills" and d.source == "rules:date_number_drills"
+        assert d.family == "date_number_drills" and d.source == "synthetic_rules"
         assert d.gold == expected(d), (d.id, d.metadata, d.state)
 
 
@@ -99,6 +101,15 @@ def test_drills_gold_spread():
         assert min(golds["yes"], golds["no"]) > 0.25 * sum(golds.values()), (kind, golds)
     pos = Counter(d.keys.index(d.gold) for d in ds if d.metadata["kind"] == "deadline_choice")
     assert len(pos) >= 4, pos
+
+
+def test_drills_windows_state_their_counting_rule():
+    windowed = 0
+    for d in generate(400, seed=12):
+        if re.search(r"\bwithin\b|\d+ (?:calendar |business )?days?\b", d.state, re.IGNORECASE):
+            windowed += 1
+            assert COUNT_PHRASE in d.state, d.state
+    assert windowed > 200
 
 
 def test_generators_deterministic():

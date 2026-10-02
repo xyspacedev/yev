@@ -71,7 +71,7 @@ def test_returns_v2_clusters_are_contrastive():
         base = members[0]
         assert base.edit_type is None
         for d in members:
-            assert d.family == "returns_v2" and d.source == "rules:returns_v2"
+            assert d.family == "returns_v2" and d.source == "synthetic_rules"
             assert d.question == base.question and d.options == base.options
         for d in members[1:]:
             assert d.edit_type in EDIT_TYPES
@@ -105,6 +105,17 @@ def test_returns_v2_boundary_coverage():
         assert spans[k] >= 20, (k, spans)
     golds = Counter(d.gold for d in ds)
     assert all(golds[g] > 0.1 * len(ds) for g in ("refund", "store_credit", "deny")), golds
+
+
+def test_returns_v2_rows_pass_licence_stage_and_count_as_synthetic():
+    from yev.filters.pipeline import _licence_ok
+    from yev.filters.shortcut import SYNTHETIC_PREFIX
+    from yev.generators.specs import SYNTHETIC_SPECS
+
+    specs = {s.name: s for s in SYNTHETIC_SPECS}
+    for d in generate(5, seed=0):
+        assert _licence_ok(d, specs, {})
+        assert d.source.startswith(SYNTHETIC_PREFIX) and d.cluster_id
 
 
 def test_generators_deterministic():
