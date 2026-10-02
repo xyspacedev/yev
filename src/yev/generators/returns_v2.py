@@ -83,7 +83,7 @@ def render_policy(tpl: int, shop: str, p: Policy) -> str:
     a, w, c = p.anchor, p.window, p.credit_days
     if tpl == 0:
         opened = ", opened or not" if p.opened_ok else ", provided they are unopened"
-        credit = (f"Requests that miss the refund terms but arrive within {c} days of {a} get store credit instead."
+        credit = (f"Requests that miss the refund terms but are made within {c} days of {a} get store credit instead."
                   if c else "Anything outside the refund terms is declined; we do not issue store credit.")
         return (f"{shop} returns policy\n- Items returned within {w} days of {a} get a full refund{opened}.\n"
                 f"- {credit}\n- Day 1 is the day after {a}.\n- Nothing marked final sale can come back, whether for a refund or an exchange.")
