@@ -34,8 +34,10 @@ def test_original_state_preserved_verbatim():
 def test_labels_unchanged():
     r = row()
     (p,) = run([r])
-    for f in ("type", "question", "options", "gold", "soft_gold", "weight", "source", "licence", "split"):
+    for f in ("type", "options", "gold", "soft_gold", "weight", "source", "licence", "split"):
         assert getattr(p, f) == getattr(r, f)
+    assert p.question == "About the forwarded item: " + r.question
+    assert p.metadata["question_prefixed"] is True
     assert p.family == "long_padding" and p.cluster_id == "pad:c1"
     assert p.metadata["orig_id"] == "r1" and p.metadata["distractor_ids"]
     p.validate()
@@ -83,3 +85,73 @@ def test_cli_pad_roundtrip(tmp_path):
     assert p.family == "long_padding"
     assert cli.main(["pad", "--in", str(tmp_path / "docs.jsonl"), "--distractors", str(tmp_path / "docs.jsonl"),
                      "--out", str(tmp_path / "o2.jsonl")]) == 2
+
+
+RULE_DOC = "\n\n".join([
+    "ACCOUNTS PAYABLE REVIEW PACKET: Acme",
+    "A. Payment terms\nA1. Terms count from the invoice date. " + "word " * 30,
+    "Company holidays in this period: 2025-12-07, 2026-01-21 " + "word " * 30,
+    *[f"From: Bob\nDate: day {i}\nPlease send the remittance. " + "word " * 30 for i in range(40)],
+    "Slash dates are written day/month/year.",
+])
+
+
+def test_rule_sensitive_row_gets_no_rule_sections():
+    out = pad([row(f"r{i}") for i in range(10)], [RULE_DOC], (200, 400), seed=2, count=count)
+    assert len(out) == 10
+    for p in out:
+        for bad in ("Payment terms", "holidays", "Slash dates", "A1."):
+            assert bad not in p.state
+
+
+def test_non_rule_sensitive_row_keeps_rule_sections_possible():
+    r = row()
+    r = Decision(**{**r.__dict__, "family": "something_else"})
+    out = pad([r] * 1, [RULE_DOC], (200, 400), seed=2, count=count)
+    assert len(out) == 1
+
+
+def test_walk_does_not_wrap():
+    from yev.generators.padding import _walk
+    import random
+    paras = [f"p{i} " + "w " * 10 for i in range(10)]
+    for seed in range(20):
+        got, _ = _walk(paras, 10_000, count, random.Random(seed))
+        assert got == paras[paras.index(got[0]):]
+
+
+def test_skip_reasons_and_already_padded():
+    long_row = row("long")
+    long_row.state = "w " * 1000
+    r = row("same")
+    skipped = []
+    out = pad([long_row, r], [r.state + "\n\n" + "x " * 400], (200, 400), seed=0, count=count, skipped=skipped)
+    assert out == [] and dict(skipped) == {"long": "too_long", "same": "same_title"}
+    (p,) = run([row()])
+    with pytest.raises(PaddingError):
+        run([p])
+
+
+def test_missing_tokenizer_cache_errors_unless_allowed(tmp_path):
+    from yev.generators.padding import TokenizerUnavailable, heuristic_tokens, load_token_counter
+    with pytest.raises(TokenizerUnavailable, match="--allow-heuristic"):
+        load_token_counter(cache_root=tmp_path)
+    assert load_token_counter(cache_root=tmp_path, allow_heuristic=True) is heuristic_tokens
+    assert heuristic_tokens("a" * 400) == 201
+    with pytest.raises(TokenizerUnavailable):
+        load_token_counter(cache_root=tmp_path)
+
+
+def test_cli_requires_tokenizer_unless_allowed(tmp_path, monkeypatch):
+    from yev import cli
+    from yev.generators import padding
+    from yev.schema import write_jsonl
+    monkeypatch.setattr(padding.Path, "home", classmethod(lambda cls: tmp_path))
+    write_jsonl(tmp_path / "rows.jsonl", [row()])
+    doc = Decision(id="d", type="choice", state=DOCS[0], question="q?", options=[Option("a", "x"), Option("b", "y")],
+                   gold="a", family="invoice_ledger", source="synthetic", licence="synthetic-cc0")
+    write_jsonl(tmp_path / "docs.jsonl", [doc])
+    argv = ["pad", "--in", str(tmp_path / "rows.jsonl"), "--distractors", str(tmp_path / "docs.jsonl"),
+            "--out", str(tmp_path / "o.jsonl"), "--target-tokens", "2000:3000"]
+    assert cli.main(argv) == 2
+    assert cli.main([*argv, "--allow-heuristic"]) == 0

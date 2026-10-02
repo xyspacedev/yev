@@ -132,11 +132,14 @@ def cmd_pad(args: argparse.Namespace) -> int:
         return 2
     states = list(dict.fromkeys(d.state for d in docs))
     try:
-        out = padding.pad(rows, states, target, args.seed)
+        skipped: list[tuple[str, str]] = []
+        out = padding.pad(rows, states, target, args.seed, allow_heuristic=args.allow_heuristic, skipped=skipped)
     except padding.PaddingError as e:
         print(str(e))
         return 2
     n = write_jsonl(args.out, out)
+    if skipped:
+        print(f"pad: skipped {dict(Counter(r for _, r in skipped))}")
     print(f"pad: {n}/{len(rows)} rows padded to {target[0]}-{target[1]} tokens -> {args.out}")
     return 0
 
@@ -719,6 +722,8 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True)
     p.add_argument("--target-tokens", default="2000:10000", help="LO:HI tokens of the padded state")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--allow-heuristic", action="store_true",
+                   help="if the Qwen tokenizer is not cached, estimate tokens as len/4 x 2.0 (warns)")
     p.set_defaults(func=cmd_pad)
 
     p = sub.add_parser("shortcut", help="down-weight shortcut-solvable public rows, drop solved synthetic clusters")

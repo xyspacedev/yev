@@ -15,8 +15,11 @@ Distractor documents must come from train/pool rows only, never dev/calibration 
 from __future__ import annotations
 
 import hashlib
+import logging
 import random
+import re
 from dataclasses import replace
+from pathlib import Path
 from typing import Callable
 
 from yev.schema import Decision
@@ -28,27 +31,52 @@ EVAL_SPLITS = ("dev", "calibration")
 MAX_TRAIN_TOKENS = 12288  # target_tokens bounds the padded state; the prompt must fit on top of hi
 TOKENIZER_NAME = "Qwen/Qwen3.5-4B-Base"
 ATTEMPTS = 30
+QUESTION_PREFIX = "About the forwarded item: "
+HEURISTIC_FACTOR = 2.0
+RULE_SENSITIVE_FAMILIES = ("returns_v2", "date_number_drills", "returns_policy", "action_review")
+# Paragraphs that state rules or policy: handbook/policy sections ("A. Payment terms"), holiday lists,
+# payment-terms clauses and values, date-format notes. Correspondence, tables and ledgers otherwise stay.
+RULE_RE = re.compile(
+    r"(?im)^[A-Z]\d?\.\s+\S|\bhandbook\b|\bholidays?\b|\bpayment terms\b|\bNet \d+\b|\bpolicy\b"
+    r"|dates are written|early-payment discount|\bdue date\b|\bterms\b.*\bapply\b"
+)
+log = logging.getLogger(__name__)
 
 
 class PaddingError(ValueError):
     """The request would break a padding rule."""
 
 
+class TokenizerUnavailable(PaddingError):
+    """The real tokenizer cannot be loaded; pass allow_heuristic to use the len/4 x 2.0 estimate."""
+
+
 def heuristic_tokens(text: str) -> int:
-    """len/4 underestimates table-heavy text by about 1.57x; 1.5x is the documented fallback."""
-    return int(len(text) / 4 * 1.5) + 1
+    """len/4 undercounts table-heavy text (1.57x measured, more in places); factor 2.0 is the fallback."""
+    return int(len(text) / 4 * HEURISTIC_FACTOR) + 1
 
 
-def load_token_counter(name: str = TOKENIZER_NAME) -> Callable[[str], int]:
-    """Real tokenizer from the local HF cache when available, else the heuristic."""
-    try:
-        from pathlib import Path
-        from transformers import AutoTokenizer
-        snaps = sorted((Path.home() / ".cache/huggingface/hub" / ("models--" + name.replace("/", "--")) / "snapshots").glob("*"))
-        tok = AutoTokenizer.from_pretrained(str(snaps[-1]))
-        return lambda text: len(tok.encode(text, add_special_tokens=False))
-    except Exception:
-        return heuristic_tokens
+def load_token_counter(name: str = TOKENIZER_NAME, allow_heuristic: bool = False,
+                       cache_root: Path | None = None) -> Callable[[str], int]:
+    """The real tokenizer from the local HF cache; the heuristic only when explicitly allowed."""
+    root = cache_root or Path.home() / ".cache/huggingface/hub"
+    snaps = sorted((root / ("models--" + name.replace("/", "--")) / "snapshots").glob("*/tokenizer.json"))
+    problem = None
+    if not snaps:
+        problem = f"tokenizer {name} not found under {root}"
+    else:
+        try:
+            from transformers import AutoTokenizer
+            tok = AutoTokenizer.from_pretrained(str(snaps[-1].parent))
+            return lambda text: len(tok.encode(text, add_special_tokens=False))
+        except ImportError as e:
+            problem = f"transformers is not installed ({e}); install the train extra"
+        except OSError as e:
+            problem = f"tokenizer {name} failed to load: {e}"
+    if not allow_heuristic:
+        raise TokenizerUnavailable(f"{problem}. Pass --allow-heuristic to estimate with len/4 x {HEURISTIC_FACTOR}.")
+    log.warning("%s; using len/4 x %s token estimate", problem, HEURISTIC_FACTOR)
+    return heuristic_tokens
 
 
 def doc_id(text: str) -> str:
@@ -68,13 +96,13 @@ def _prompt_tokens(d: Decision, count) -> int:
 
 
 def _walk(paras: list[str], budget: int, count, rng: random.Random) -> tuple[list[str], list[int]]:
-    """Contiguous paragraphs from a random start whose token sum stays within budget."""
+    """Contiguous paragraphs from a random start, never wrapping past the end, within budget."""
     if not paras or budget <= 0:
         return [], []
     start = rng.randrange(len(paras))
     out: list[str] = []
     used = 0
-    for p in paras[start:] + paras[:start]:
+    for p in paras[start:]:
         n = count(p) + 2
         if used + n > budget:
             break
@@ -84,11 +112,16 @@ def _walk(paras: list[str], budget: int, count, rng: random.Random) -> tuple[lis
 
 
 def pad(rows: list[Decision], distractors: list[str], target_tokens: tuple[int, int], seed,
-        distractor_ids: list[str] | None = None, count: Callable[[str], int] | None = None
-        ) -> list[Decision]:
+        distractor_ids: list[str] | None = None, count: Callable[[str], int] | None = None,
+        allow_heuristic: bool = False, skipped: list[tuple[str, str]] | None = None) -> list[Decision]:
+    """`skipped`, when given, receives (row id, reason) with reason too_long, no_distractor, same_title
+    or length_unmet."""
     lo, hi = target_tokens
     if not 0 < lo <= hi <= MAX_TRAIN_TOKENS:
         raise PaddingError(f"target_tokens {target_tokens} must satisfy 0 < lo <= hi <= {MAX_TRAIN_TOKENS}")
+    done = [r.id for r in rows if r.family == FAMILY]
+    if done:
+        raise PaddingError(f"rows are already long_padding: {done[:3]}")
     bad = [r.id for r in rows if r.split in EVAL_SPLITS]
     if bad:
         raise PaddingError(f"refusing to pad dev/calibration rows: {bad[:3]}")
@@ -97,7 +130,7 @@ def pad(rows: list[Decision], distractors: list[str], target_tokens: tuple[int, 
     ids = distractor_ids or [doc_id(t) for t in distractors]
     if len(ids) != len(distractors):
         raise PaddingError("distractor_ids length differs from distractors")
-    count = count or load_token_counter()
+    count = count or load_token_counter(allow_heuristic=allow_heuristic)
     cache: dict[str, int] = {}
 
     def cnt(t: str) -> int:
@@ -106,14 +139,22 @@ def pad(rows: list[Decision], distractors: list[str], target_tokens: tuple[int, 
         return cache[t]
 
     parsed = [paragraphs(t) for t in distractors]
+    parsed_clean = [[p for p in ps if not RULE_RE.search(p)] for ps in parsed]
+    skipped = skipped if skipped is not None else []
     out: list[Decision] = []
     for row in rows:
         rng = random.Random(f"{seed}:{row.id}")
         title = _title(row.state)
         usable = [i for i, t in enumerate(distractors) if _title(t) != title and row.state not in t]
         own = cnt(row.state) + cnt(FORWARDED_OPEN) + cnt(FORWARDED_CLOSE) + 4
-        if not usable or own >= hi or hi + _prompt_tokens(row, cnt) > MAX_TRAIN_TOKENS:
+        if own >= hi or hi + _prompt_tokens(row, cnt) > MAX_TRAIN_TOKENS:
+            skipped.append((row.id, "too_long"))
             continue
+        if not usable:
+            same = any(_title(t) == title for t in distractors)
+            skipped.append((row.id, "same_title" if same else "no_distractor"))
+            continue
+        pool = parsed_clean if row.family in RULE_SENSITIVE_FAMILIES else parsed
         for _ in range(ATTEMPTS):
             target = rng.randint(max(lo, own), hi)
             budget = target - own
@@ -122,7 +163,7 @@ def pad(rows: list[Decision], distractors: list[str], target_tokens: tuple[int, 
             parts: list[list[str]] = []
             for b in (before_budget, budget - before_budget):
                 i = rng.choice(usable)
-                paras, used = _walk(parsed[i], b, cnt, rng)
+                paras, used = _walk(pool[i], b, cnt, rng)
                 parts.append(paras)
                 if paras:
                     used_docs.append(i)
@@ -130,11 +171,12 @@ def pad(rows: list[Decision], distractors: list[str], target_tokens: tuple[int, 
             if lo <= count("\n\n".join(blocks)) <= hi:
                 break
         else:
+            skipped.append((row.id, "length_unmet"))
             continue
         meta = dict(row.metadata or {})
-        meta.update(orig_id=row.id, distractor_ids=[ids[i] for i in dict.fromkeys(used_docs)])
+        meta.update(orig_id=row.id, question_prefixed=True, distractor_ids=[ids[i] for i in dict.fromkeys(used_docs)])
         out.append(replace(
-            row, id=f"pad:{row.id}", state="\n\n".join(blocks), family=FAMILY,
+            row, id=f"pad:{row.id}", question=QUESTION_PREFIX + row.question, state="\n\n".join(blocks), family=FAMILY,
             cluster_id=f"pad:{row.cluster_id or row.id}", metadata=meta,
         ))
     return out
