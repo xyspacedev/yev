@@ -28,7 +28,8 @@ from yev.generators import padding
 from yev.generators import actions, drills, invoices, many_options, returns, returns_v2, scales, severity
 from yev.generators.common import EDIT_TYPES
 from yev.generators.llm.attrib import prepare_pairs, render_attrib_prompt, score_attribution
-from yev.generators.llm.check import prepare_sheets, render_checker_prompt, score_answers
+from yev.generators.llm import documents
+from yev.generators.llm.check import LETTERS, letter_pattern, prepare_sheets, render_checker_prompt, score_answers
 from yev.generators.llm.ingest import ingest_file
 from yev.generators.llm.plan import plan_batches, render_writer_prompt
 from yev.generators.specs import SYNTHETIC_SPECS
@@ -265,7 +266,7 @@ def _coverage(key: dict, answers: list[dict], field: str) -> tuple[int, int]:
         if item not in expected:
             continue
         if field == "item_id":
-            m = re.search(r"\b([A-F])\b", str(a.get("letter", "")).upper())
+            m = letter_pattern(len(key[item].get("letters", {}))).search(str(a.get("letter", "")).upper())
             valid = bool(m) and m.group(1) in key[item].get("letters", {})
         else:
             valid = str(a.get("edit_type", "")).strip().lower() in EDIT_TYPES
@@ -316,8 +317,58 @@ def cmd_synth_plan(args) -> int:
     return 0
 
 
+def _is_doc_run(run: Path) -> bool:
+    return any(documents.is_doc_spec(json.loads(p.read_text())) for p in (run / "batches").glob("*.json"))
+
+
+def _refuse_doc_run(run: Path, what: str) -> bool:
+    if _is_doc_run(run):
+        print(f"error: {run} is a document run; {what}")
+        return True
+    return False
+
+
+def cmd_synth_doc_plan(args) -> int:
+    run = Path(args.dir)
+    _clear(run, "batches", "ingested.jsonl", "checked.jsonl", "check", "attrib", "private", "final", "reports")
+    planned = documents.plan_doc_batches(args.docs, args.per_batch, args.seed)
+    (run / "written").mkdir(parents=True, exist_ok=True)
+    live = {b["batch_id"] for b in planned}
+    for stale in (run / "written").glob("*.jsonl"):
+        if stale.stem not in live:
+            stale.unlink()
+    for b in planned:
+        spec_path = run / "batches" / f"{b['batch_id']}.json"
+        spec_path.parent.mkdir(parents=True, exist_ok=True)
+        spec_path.write_text(json.dumps(b, indent=2))
+        out = (run / "written" / f"{b['batch_id']}.jsonl").resolve()
+        spec_path.with_suffix(".prompt.md").write_text(documents.doc_writer_prompt(b, str(out)))
+    n_inj = sum(len(b["injection_docs"]) for b in planned)
+    print(f"planned {args.docs} documents in {len(planned)} batches ({n_inj} with an injected instruction)")
+    return 0
+
+
+def cmd_synth_doc_ingest(args) -> int:
+    run = Path(args.dir)
+    if not _is_doc_run(run):
+        print(f"error: {run} has no document batches; run synth doc-plan first")
+        return 2
+    _clear(run, "ingested.jsonl", "checked.jsonl", "final", "check", "attrib", "private",
+           "reports/check.json", "reports/pilot.json")
+    stats, dropped = Counter(), []
+    count, method = documents.load_doc_counter()
+    rows = documents.ingest_docs(run, count=count, stats=stats, dropped=dropped, method=method)
+    write_jsonl(run / "ingested.jsonl", rows)
+    _write_json(run / "reports" / "ingest.json", {**dict(stats), "token_count": method})
+    _write_json(run / "reports" / "ingest-dropped.json", dropped)
+    print(json.dumps({**dict(stats), "token_count": method}))
+    return 0
+
+
 def cmd_synth_ingest(args) -> int:
     run = Path(args.dir)
+    if _refuse_doc_run(run, "use synth doc-ingest"):
+        return 2
     _clear(run, "ingested.jsonl", "checked.jsonl", "final", "check", "attrib", "private",
            "reports/check.json", "reports/attrib.json", "reports/pilot.json")
     rows, stats = [], Counter()
@@ -344,13 +395,18 @@ def cmd_synth_check_prepare(args) -> int:
         return 2
     _clear(run, "check", "checked.jsonl", "attrib", "private", "final",
            "reports/check.json", "reports/attrib.json", "reports/pilot.json")
+    doc_run = _is_doc_run(run)
+    part_size = args.doc_part_size if doc_run else args.part_size
     parts, key = prepare_sheets(list(read_jsonl(run / "ingested.jsonl")), n_sheets=args.sheets,
-                                part_size=args.part_size, seed=args.seed)
+                                part_size=part_size, seed=args.seed)
     for name, items in parts:
         sheet = (run / "check" / f"{name}.jsonl").resolve()
         _dump_items(sheet, items)
         answers = sheet.with_name(f"answers-{name}.jsonl")
-        sheet.with_suffix(".prompt.md").write_text(render_checker_prompt(str(sheet), str(answers)))
+        widest = max(len(it["options"]) for it in items)
+        prompt = render_checker_prompt(str(sheet), str(answers), max_letter=LETTERS[max(widest, 6) - 1],
+                                       documents=doc_run)
+        sheet.with_suffix(".prompt.md").write_text(prompt)
     _write_json(run / "private" / "check-key.json", key)
     print(f"{len(parts)} checker parts")
     return 0
@@ -369,6 +425,8 @@ def cmd_synth_check_score(args) -> int:
     if n == 0:
         print("error: no answers found")
         return 2
+    if _is_doc_run(run):
+        return _doc_check_score(run, key, answers, bad, n, m)
     kept, stats = score_answers(list(read_jsonl(run / "ingested.jsonl")), key, answers)
     stats["bad_answer_line"] = bad
     stats["answered"], stats["expected"] = n, m
@@ -381,8 +439,32 @@ def cmd_synth_check_score(args) -> int:
     return 0
 
 
+def _doc_check_score(run: Path, key: dict, answers: list[dict], bad: int, n: int, m: int) -> int:
+    """Documents skip attribution (Plan Ruling 2): check-score writes the final rows and the pilot report."""
+    ingested = list(read_jsonl(run / "ingested.jsonl"))
+    survivors, _ = score_answers(ingested, key, answers, cluster_filter=None)
+    kept, stats = documents.score_doc_answers(ingested, key, answers)
+    stats["bad_answer_line"] = bad
+    stats["answered"], stats["expected"] = n, m
+    if n < m:
+        print(f"WARNING: only {n} of {m} check items answered")
+    write_jsonl(run / "checked.jsonl", kept)
+    write_jsonl(run / "final" / "synthetic_docs.jsonl", kept)
+    _write_json(run / "reports" / "check.json", dict(stats))
+    specs = [json.loads(p.read_text()) for p in sorted((run / "batches").glob("*.json"))]
+    ingest = json.loads((run / "reports" / "ingest.json").read_text()) if (run / "reports" / "ingest.json").exists() else {}
+    pilot = documents.doc_pilot_report([b for b in specs if documents.is_doc_spec(b)], ingest, ingested,
+                                       survivors, kept)
+    _write_json(run / "reports" / "pilot.json", pilot)
+    print(json.dumps(dict(stats)))
+    print(json.dumps(pilot, indent=2))
+    return 0
+
+
 def cmd_synth_attrib_prepare(args) -> int:
     run = Path(args.dir)
+    if _refuse_doc_run(run, "documents skip edit attribution; check-score already wrote final/synthetic_docs.jsonl"):
+        return 2
     if not (run / "checked.jsonl").exists():
         print(f"missing {run / 'checked.jsonl'}; run synth check-score first")
         return 2
@@ -401,6 +483,8 @@ def cmd_synth_attrib_prepare(args) -> int:
 
 def cmd_synth_attrib_score(args) -> int:
     run = Path(args.dir)
+    if _refuse_doc_run(run, "documents skip edit attribution; check-score already wrote final/synthetic_docs.jsonl"):
+        return 2
     for need in (run / "private" / "attrib-key.json", run / "checked.jsonl", run / "reports" / "ingest.json"):
         if not need.exists():
             print(f"error: missing {need}")
@@ -749,10 +833,14 @@ def make_parser() -> argparse.ArgumentParser:
     ssub = synth.add_subparsers(dest="synth_command", required=True)
     for name, func in [("plan", cmd_synth_plan), ("ingest", cmd_synth_ingest),
                        ("check-prepare", cmd_synth_check_prepare), ("check-score", cmd_synth_check_score),
-                       ("attrib-prepare", cmd_synth_attrib_prepare), ("attrib-score", cmd_synth_attrib_score)]:
+                       ("attrib-prepare", cmd_synth_attrib_prepare), ("attrib-score", cmd_synth_attrib_score),
+                       ("doc-plan", cmd_synth_doc_plan), ("doc-ingest", cmd_synth_doc_ingest)]:
         p = ssub.add_parser(name)
         p.add_argument("--dir", required=True)
-        if name in ("plan", "check-prepare", "attrib-prepare"):
+        if name == "doc-plan":
+            p.add_argument("--docs", type=int, required=True)
+            p.add_argument("--per-batch", type=int, default=2)
+        if name in ("plan", "doc-plan", "check-prepare", "attrib-prepare"):
             p.add_argument("--seed", type=int, default=0)
         p.set_defaults(func=func)
         if name == "plan":
@@ -762,6 +850,9 @@ def make_parser() -> argparse.ArgumentParser:
             p.add_argument("--sheets", type=int, default=3)
         if name in ("check-prepare", "attrib-prepare"):
             p.add_argument("--part-size", type=int, default=250)
+        if name == "check-prepare":
+            p.add_argument("--doc-part-size", type=int, default=documents.CHECK_PART_SIZE,
+                           help="items per checker part in a document run (each item carries a whole document)")
 
     p = sub.add_parser("train", help="Stage 0 LoRA training from a JSON config")
     p.add_argument("--config", required=True)

@@ -31,3 +31,55 @@ DOMAINS: tuple[str, ...] = (
     "data-labelling vendor", "cloud backup service", "toy manufacturer", "bakery chain", "research lab",
     "charity shop network", "airport lounge operator", "e-bike retailer", "translation agency", "cosmetics brand",
 )
+
+# Family 6, long_workflow: long documents written by Opus, each carrying several typed questions.
+# topic name -> (question type, what the question asks). A question's `name` is its topic name.
+DOC_TOPICS: dict[str, tuple[str, str]] = {
+    "next_action": ("choice", "What the person or agent handling the case should do next, given everything in the document so far."),
+    "policy_compliance": ("choice", "Whether a specific action taken or proposed in the document follows the written policy or procedure quoted in the document."),
+    "escalation": ("choice", "Which team, role or person the case should go to now, under the routing rules stated in the document."),
+    "root_cause": ("choice", "Which cause the evidence in the document supports; one option says the document does not settle it."),
+    "claim_support": ("choice", "Whether the document supports, contradicts, or does not settle a specific claim someone makes about the case."),
+    "tool_choice": ("choice", "Which tool, command or step an agent should use next, given its instructions and the outputs so far."),
+    "error_detection": ("choice", "Which step, message or entry in the document is the first one that is wrong (a bad calculation, a broken rule, a misread output)."),
+    "resolution_status": ("choice", "The true current state of the issue or task at the end of the document, as opposed to what someone claimed."),
+    "commitment_check": ("choice", "What was actually promised or agreed, by whom, and by when, after later messages corrected earlier ones."),
+    "numeric_reasoning": ("choice", "A quantity that must be worked out from figures spread across the document (amount owed, hours of downtime, units left); options are candidate values."),
+    "customer_sentiment": ("score", "The tone of the customer or user at the end of the document, on a numbered scale defined in the options."),
+    "severity": ("score", "How severe the incident or problem is, on a numbered scale whose levels are defined in the options."),
+    "risk": ("score", "How risky a proposed action is, on a numbered scale whose levels are defined in the options."),
+}
+
+# kind -> (what the document is, the question topics it should carry)
+DOC_KINDS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "support_thread": (
+        "An email or chat thread between a customer and a support team over several days, with internal notes, "
+        "order or account details, and the policy excerpts the agents quote.",
+        ("next_action", "policy_compliance", "escalation", "claim_support", "resolution_status",
+         "numeric_reasoning", "customer_sentiment"),
+    ),
+    "incident_report": (
+        "A post-incident report or a live incident channel log: timeline, alerts, actions taken, impact figures, "
+        "and the on-call runbook excerpt the responders follow.",
+        ("severity", "root_cause", "next_action", "claim_support", "numeric_reasoning", "policy_compliance",
+         "escalation", "error_detection"),
+    ),
+    "agent_trace": (
+        "The step-by-step log of an AI agent working a task: the operator's instructions and rules, each tool "
+        "call with its arguments, each tool output, and the agent's messages to the user.",
+        ("tool_choice", "error_detection", "policy_compliance", "risk", "next_action", "claim_support",
+         "resolution_status"),
+    ),
+    "multi_turn_transcript": (
+        "A long multi-turn conversation between a user and an assistant, or between two staff members, in which "
+        "requirements change and earlier statements get corrected.",
+        ("next_action", "claim_support", "commitment_check", "customer_sentiment", "resolution_status",
+         "numeric_reasoning", "risk"),
+    ),
+    "ops_handover": (
+        "A shift or project handover note: open items, a status table, pending decisions, owners and deadlines, "
+        "plus the procedure the incoming shift must follow.",
+        ("next_action", "commitment_check", "escalation", "risk", "numeric_reasoning", "policy_compliance",
+         "resolution_status"),
+    ),
+}

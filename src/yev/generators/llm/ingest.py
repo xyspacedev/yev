@@ -7,11 +7,12 @@ from collections import Counter
 from pathlib import Path
 
 from yev.generators.common import EDIT_TYPES, MAX_EDIT_TOKENS, make_cluster, token_edit_size
-from yev.generators.llm.check import LETTERS
+from yev.generators.llm.check import CLUSTER_LETTERS
 from yev.schema import Decision, Option, SchemaError
 
 SOURCE = "synthetic_opus"
 MIN_CHOICE_OPTIONS = 3
+MAX_CLUSTER_OPTIONS = CLUSTER_LETTERS  # clusters stay at <=6 options; only documents use up to 10
 
 
 def _options(raw: list[dict]) -> list[Option]:
@@ -36,7 +37,7 @@ def _policy_edit_check(base: list[Option], new: list[Option]) -> str | None:
 
 def parse_cluster(obj: dict, *, cluster_id: str, family: str, qtype: str) -> tuple[list[Decision], Counter]:
     reasons: Counter = Counter()
-    if len(obj["options"]) > len(LETTERS):
+    if len(obj["options"]) > MAX_CLUSTER_OPTIONS:
         reasons["too_many_options"] += 1
         reasons["cluster_rejected"] += 1
         return [], reasons
@@ -64,7 +65,7 @@ def parse_cluster(obj: dict, *, cluster_id: str, family: str, qtype: str) -> tup
         else:
             members.append((state, options, gold, edit))
     for v in obj.get("policy_variants") or []:
-        if len(v["options"]) > len(LETTERS):
+        if len(v["options"]) > MAX_CLUSTER_OPTIONS:
             reasons["too_many_options"] += 1
             continue
         new_options = _options(v["options"])

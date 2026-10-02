@@ -97,7 +97,7 @@ def test_too_many_options():
     seven = [{"key": f"k{i}", "description": f"Option {i}."} for i in range(7)]
     ds, reasons = parse_cluster(cluster(options=seven), cluster_id="x", family="f", qtype="choice")
     assert ds == [] and reasons["too_many_options"] == 1
-    big = [Option(f"k{i}", f"Option {i}.") for i in range(7)]
+    big = [Option(f"k{i}", f"Option {i}.") for i in range(11)]
     d = make_cluster(cluster_id="k", family="f", source="s", qtype="choice", question="q",
                      members=[("a", big, "k0", None), ("b", big, "k1", "negation")])
     with pytest.raises(ValueError, match="options"):
