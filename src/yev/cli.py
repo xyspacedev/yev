@@ -571,12 +571,15 @@ def _n_max_for(args) -> int:
     return N_MAX
 
 
-def _letter_logits_for(args) -> tuple[list[dict], list[list[float]], list[str]] | None:
+def _letter_logits_for(args, prepare=None) -> tuple[list[dict], list[list[float]], list[str]] | None:
     """Rows kept, their letter logits, and the skipped over-long ids; None when over-long rows, or rows
-    with more options than n_max, are refused. Sets args.n_max to the resolved value."""
+    with more options than n_max, are refused. Sets args.n_max to the resolved value. `prepare` maps
+    the loaded rows to the rows actually scored (the position-bias check)."""
     from yev.train import infer
     from yev.train.data import load_rows
     rows = load_rows(args.data)
+    if prepare is not None:
+        rows = prepare(rows)
     args.n_max = _n_max_for(args)
     wide = [r["id"] for r in rows if len(r["letters"]) > args.n_max]
     if wide:
@@ -625,9 +628,55 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def _eval_position_bias(args, temps: dict) -> int:
+    """yev eval --shuffle-options K: re-ask each row with >= --min-options options in its original
+    order and K seeded permutations; compare the per-key distributions (spec §5)."""
+    from yev.train import position_bias as pb
+    from yev.train import readout
+    skipped = {"score": 0, "few_options": 0}
+
+    def prepare(rows):
+        out = []
+        for r in rows:
+            if r["type"] == "score":  # a scale's order is its meaning; training never shuffles it
+                skipped["score"] += len(r["letters"]) >= args.min_options
+                continue
+            if len(r["letters"]) < args.min_options:
+                skipped["few_options"] += 1
+                continue
+            for j, order in enumerate(pb.orders(r["id"], len(r["letters"]), args.shuffle_options, args.seed)):
+                out.append({**pb.permute_row(r, order), "id": f"{r['id']}#order{j}", "_base": r["id"], "_order": j})
+        return out
+
+    got = _letter_logits_for(args, prepare)
+    if got is None:
+        return 2
+    rows, logits, overlong = got
+    n_orders = args.shuffle_options + 1
+    by_base: dict[str, dict] = {}
+    for r, z in zip(rows, logits):
+        p = readout.probs(z, n=len(r["letters"]), temperature=temps.get(r["type"], 1.0))
+        g = by_base.setdefault(r["_base"], {"n_options": len(r["letters"]), "gold": r["letters"][r["answer"]],
+                                            "orders": [None] * n_orders})
+        g["orders"][r["_order"]] = {r["letters"][L]: q for L, q in zip(r["letters"], p)}
+    groups = [g for g in by_base.values() if all(o is not None for o in g["orders"])]
+    overlong_base = sorted({i.rsplit("#order", 1)[0] for i in overlong})
+    rep = pb.report(groups)
+    rep.update(n_skipped_score=skipped["score"], n_skipped_few_options=skipped["few_options"],
+               n_skipped_overlong=len(overlong_base))
+    rep["run"] = {"model": args.model, "data": args.data, "max_len": args.max_len, "n_max": args.n_max,
+                  "calibration": args.calibration, "shuffle_options": args.shuffle_options,
+                  "min_options": args.min_options, "seed": args.seed, "skipped_overlong_ids": overlong_base}
+    _write_json(Path(args.out), rep)
+    print(json.dumps({k: v for k, v in rep.items() if k != "run"}, indent=2))
+    return 0
+
+
 def cmd_eval(args) -> int:
     from yev.train import metrics, readout
     temps = json.loads(Path(args.calibration).read_text())["temperatures"] if args.calibration else {}
+    if args.shuffle_options:
+        return _eval_position_bias(args, temps)
     got = _letter_logits_for(args)
     if got is None:
         return 2
@@ -690,8 +739,13 @@ def cmd_bench_score(args) -> int:
     out = Path(args.out)
     rows_path = Path(args.rows)
     sentinel = None
+    if args.stage is not None and not re.fullmatch(r"[A-Za-z0-9_]+", args.stage):
+        print(f"error: --stage {args.stage!r} must be letters, digits or _ (it names a sentinel file)")
+        return 2
     if args.name == "decidebench":
-        sentinel = BENCH_DIR / "decidebench" / f".scored-{_bench_variant(rows_path) or 'unknown'}"
+        # Stage 0 kept the bare .scored-<variant>; a later stage gets its own once-guard
+        stage = f"{args.stage}-" if args.stage else ""
+        sentinel = BENCH_DIR / "decidebench" / f".scored-{stage}{_bench_variant(rows_path) or 'unknown'}"
         for guard in (out / "metrics.json", sentinel):
             if guard.exists() and not args.force:
                 print(f"error: {guard} exists; the DecideBench test is scored once (pass --force to rerun)")
@@ -716,7 +770,7 @@ def cmd_bench_score(args) -> int:
     report["run"] = {"model": args.model, "base": args.base, "rows": str(rows_path), "variant": variant,
                      "calibration": args.calibration, "temperatures": temps or None, "max_len": args.max_len,
                      "n_skipped_overlong": len(overlong), "skipped_overlong_ids": overlong,
-                     "git_sha": _git_sha(), "bench_revision": meta.get("revision")}
+                     "git_sha": _git_sha(), "bench_revision": meta.get("revision"), "stage": args.stage}
     report["overlap"] = {k: v for k, v in ov.items() if k != "overlapping_ids"} if ov else None
     out.mkdir(parents=True, exist_ok=True)
     keep = ("id", "letters", "probs", "pred", "gold")
@@ -725,7 +779,7 @@ def cmd_bench_score(args) -> int:
     _write_json(out / "metrics.json", report)
     if sentinel is not None:
         sentinel.parent.mkdir(parents=True, exist_ok=True)
-        sentinel.write_text(json.dumps({"out": str(out), "git_sha": _git_sha()}) + "\n")
+        sentinel.write_text(json.dumps({"out": str(out), "git_sha": _git_sha(), "stage": args.stage}) + "\n")
     print(json.dumps({k: v for k, v in report.items() if k not in ("reference", "by_family", "by_category")}, indent=2))
     return 0
 
@@ -775,6 +829,17 @@ def cmd_bench_fingerprint(args) -> int:
                    "short_items": fp.meta["short_items"]["counts"][n]} for n in fp.names()}
     print(json.dumps(summary, indent=2))
     return 0
+
+
+def cmd_gate(args) -> int:
+    """Stage 1 publish gate; exit 0 when PUBLISHABLE, 1 when not (a missing input is FAIL)."""
+    from yev import gate
+    rep = gate.evaluate(stage0_dev=args.stage0_dev, stage1_dev=args.stage1_dev, workflowevals=args.workflowevals,
+                        bench=args.bench, decidebench=args.decidebench)
+    rep["git_sha"] = _git_sha()
+    _write_json(Path(args.out), rep)
+    print(gate.table(rep))
+    return 0 if rep["publishable"] else 1
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -884,6 +949,11 @@ def make_parser() -> argparse.ArgumentParser:
                        help="leave rows longer than --max-len out (ids recorded in the output JSON); default is an error")
         if name == "eval":
             p.add_argument("--calibration", help="calibration JSON from yev calibrate (default T=1)")
+            p.add_argument("--shuffle-options", type=int, default=0, metavar="K",
+                           help="position-bias check: re-ask each row with >= --min-options options in K seeded "
+                                "option orders (plus the original); --out gets position_bias JSON, not dev metrics")
+            p.add_argument("--min-options", type=int, default=7, help="rows with fewer options are left out")
+            p.add_argument("--seed", type=int, default=0, help="seed of the option permutations")
         p.set_defaults(func=func)
     p = sub.add_parser("serve", help="serve the model behind TypeSafe's POST /v1/systemone (needs the serve extra)")
     p.add_argument("--model", required=True, help="LoRA adapter dir or full model dir")
@@ -900,6 +970,15 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--model-name", default="yev-4b", help="model name reported in responses and /v1/models")
     p.set_defaults(func=cmd_serve)
     from yev.bench import BENCHES
+    p = sub.add_parser("gate", help="Stage 1 publish-gate report (exit 1 unless PUBLISHABLE)")
+    p.add_argument("--stage0-dev", help="yev eval report of the model on the Stage 0 dev set (accuracy)")
+    p.add_argument("--stage1-dev", help="yev eval report of the model on the Stage 1 (all) dev set (ECE)")
+    p.add_argument("--workflowevals", help="directory of <workflow>/scores.json")
+    p.add_argument("--bench", help="directory of jevbench/, dynabench_test/, rjudge/ metrics.json")
+    p.add_argument("--decidebench", help="directory of the DecideBench test (with examples) metrics.json")
+    p.add_argument("--out", required=True, help="gate.json")
+    p.set_defaults(func=cmd_gate)
+
     bench = sub.add_parser("bench", help="external benchmarks: build rows, score a model, check overlap")
     bsub = bench.add_subparsers(dest="bench_command", required=True)
     p = bsub.add_parser("build", help="download a benchmark and write chat rows (network)")
@@ -918,6 +997,8 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--skip-overlong", action="store_true",
                    help="leave rows longer than --max-len out of scoring (ids recorded in metrics.json)")
     p.add_argument("--force", action="store_true", help="decidebench: overwrite an existing <out>/metrics.json")
+    p.add_argument("--stage", help="decidebench: once-guard per training stage (sentinel .scored-<stage>-<variant>; "
+                                   "without it, Stage 0's .scored-<variant>)")
     p.add_argument("--batch-tokens", type=int, default=16384)
     p.set_defaults(func=cmd_bench_score)
     p = bsub.add_parser("overlap", help="share of benchmark states sharing a normalised 8-gram with training")

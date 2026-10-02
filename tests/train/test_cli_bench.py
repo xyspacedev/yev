@@ -175,3 +175,49 @@ def test_decidebench_is_scored_once_unless_forced(tmp_path, monkeypatch, tok, ti
     # other benchmarks may be rescored into the same directory
     rj = _rjudge_rows(tmp_path)
     assert cli.main(["bench", "score", "--name", "rjudge", "--model", "m", "--rows", str(rj), "--out", str(out)]) == 0
+
+
+def test_decidebench_sentinel_per_stage(tmp_path, monkeypatch, tok, tiny_model, capsys):
+    monkeypatch.setattr(infer, "load", lambda m, b: (tok, tiny_model))
+    monkeypatch.setattr(cli, "BENCH_DIR", tmp_path / "bench")
+    test, ex = _items()
+    conv = B.convert(test, ex)
+    sent = tmp_path / "bench/decidebench"
+    sent.mkdir(parents=True)
+    # the Stage 0 sentinels, as they exist locally (empty files)
+    (sent / ".scored-examples").write_text("")
+    (sent / ".scored-zeroshot").write_text("")
+    for variant in ("examples", "zeroshot"):
+        rows = tmp_path / f"rows_{variant}.chat.jsonl"
+        write_rows(rows, conv[variant])
+        base = ["bench", "score", "--name", "decidebench", "--model", "m", "--rows", str(rows)]
+        # without --stage the Stage 0 sentinel still blocks
+        assert cli.main(base + ["--out", str(tmp_path / f"s0-{variant}")]) == 2
+        assert "scored once" in capsys.readouterr().out
+        assert not (tmp_path / f"s0-{variant}").exists()
+        # --stage stage1 writes and checks its own sentinel
+        out = tmp_path / f"stage1-{variant}"
+        assert cli.main(base + ["--out", str(out), "--stage", "stage1"]) == 0
+        s1 = sent / f".scored-stage1-{variant}"
+        assert s1.exists() and json.loads(s1.read_text())["out"] == str(out)
+        m = json.loads((out / "metrics.json").read_text())
+        assert m["run"]["stage"] == "stage1"
+        # a second stage1 score is refused, even into another --out, unless forced
+        assert cli.main(base + ["--out", str(tmp_path / f"again-{variant}"), "--stage", "stage1"]) == 2
+        assert ".scored-stage1-" + variant in capsys.readouterr().out
+        assert cli.main(base + ["--out", str(out), "--stage", "stage1", "--force"]) == 0
+    assert sorted(p.name for p in sent.iterdir()) == [".scored-examples", ".scored-stage1-examples",
+                                                      ".scored-stage1-zeroshot", ".scored-zeroshot"]
+    # the Stage 0 sentinels are untouched
+    assert (sent / ".scored-examples").read_text() == "" and (sent / ".scored-zeroshot").read_text() == ""
+
+
+def test_bench_stage_name_is_checked(tmp_path, monkeypatch, tok, tiny_model, capsys):
+    monkeypatch.setattr(infer, "load", lambda m, b: (tok, tiny_model))
+    monkeypatch.setattr(cli, "BENCH_DIR", tmp_path / "bench")
+    test, ex = _items()
+    rows = tmp_path / "rows_examples.chat.jsonl"
+    write_rows(rows, B.convert(test, ex)["examples"])
+    assert cli.main(["bench", "score", "--name", "decidebench", "--model", "m", "--rows", str(rows),
+                     "--out", str(tmp_path / "o"), "--stage", "../x"]) == 2
+    assert "--stage" in capsys.readouterr().out and not (tmp_path / "o").exists()
