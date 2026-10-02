@@ -1,0 +1,11 @@
+{
+  "state": "I was charged twice. Please help.",
+  "model": "jev-latest",
+  "questions": {
+    "urgency": {
+      "type": "score",
+      "instructions": "How urgent is this message?",
+      "criteria": ["Can wait", "Needs attention this week", "Needs attention today"]
+    }
+  }
+}

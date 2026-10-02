@@ -1,0 +1,5 @@
+{
+  "state": "I was charged twice. Please help.",
+  "model": "jev-latest",
+  "questions": {"billing": {"instructions": "Is this message about billing?", "type": "noul"}}
+}

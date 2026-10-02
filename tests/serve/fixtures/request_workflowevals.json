@@ -1,0 +1,42 @@
+{
+  "state": {"conversation": [{"role": "customer", "text": "I was charged twice. Please help."}]},
+  "model": "jev-1.13.0",
+  "questions": {
+    "desired_outcome": {
+      "type": "choice",
+      "instructions": "What resolution does the customer say they want?",
+      "criteria": {
+        "money_back": "A refund, reversal, credit, or fee waiver.",
+        "replacement_or_fix": "A replacement item, a new card, a repair, or the service made to work.",
+        "explanation_only": "To understand what happened or how something works; no money or item requested.",
+        "speak_to_human": "To talk to a person, a manager, or a specific department.",
+        "not_stated": "The customer has not said what outcome they want."
+      }
+    },
+    "urgency": {
+      "type": "score",
+      "instructions": "How time-critical is the customer's situation, as they describe it?",
+      "criteria": [
+        "No time pressure mentioned.",
+        "Some inconvenience; they would like it handled soon.",
+        "Pressing: a deadline, travel, a payment due, or repeated failed attempts are mentioned.",
+        "Emergency: stranded, locked out with no alternative, unable to pay for essentials, or ongoing unauthorized use right now."
+      ]
+    },
+    "requests_human": {
+      "type": "noul",
+      "instructions": "Does the customer ask to speak with a human, a real person, a manager, or a supervisor?",
+      "criteria": {
+        "true": "The customer explicitly asks for a person, a manager, or to be transferred away from the bot.",
+        "false": "The customer does not ask for a human."
+      }
+    },
+    "category": {
+      "type": "choice",
+      "instructions": "What is this ticket about?",
+      "criteria": {"billing": null, "technical": null, "other": null}
+    },
+    "bare": {"type": "noul", "instructions": null, "criteria": null},
+    "half": {"type": "noul", "instructions": "Spam?", "criteria": {"true": "ads", "false": null}}
+  }
+}

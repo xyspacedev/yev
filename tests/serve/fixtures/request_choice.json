@@ -1,0 +1,11 @@
+{
+  "state": {"message": "Please help.", "subject": "Duplicate charge"},
+  "model": "jev-latest",
+  "questions": {
+    "tone": {
+      "type": "choice",
+      "instructions": "What is the tone of this message?",
+      "criteria": {"angry": "An upset or hostile message", "calm": "A neutral or polite message", "excited": "An enthusiastic or eager message"}
+    }
+  }
+}
