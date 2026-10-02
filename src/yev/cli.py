@@ -428,11 +428,29 @@ def cmd_synth_attrib_score(args) -> int:
     return 0
 
 
+def _n_max_for(args) -> int:
+    """--n-max, else the run config's n_max saved beside the model (train_config.json), else 6."""
+    from yev.train.data import N_MAX
+    if args.n_max is not None:
+        return args.n_max
+    saved = Path(args.model) / "train_config.json"
+    if saved.exists():
+        return int(json.loads(saved.read_text()).get("n_max", N_MAX))
+    return N_MAX
+
+
 def _letter_logits_for(args) -> tuple[list[dict], list[list[float]], list[str]] | None:
-    """Rows kept, their letter logits, and the skipped over-long ids; None when over-long rows are refused."""
+    """Rows kept, their letter logits, and the skipped over-long ids; None when over-long rows, or rows
+    with more options than n_max, are refused. Sets args.n_max to the resolved value."""
     from yev.train import infer
     from yev.train.data import load_rows
     rows = load_rows(args.data)
+    args.n_max = _n_max_for(args)
+    wide = [r["id"] for r in rows if len(r["letters"]) > args.n_max]
+    if wide:
+        print(f"error: {len(wide)} rows have more than n_max = {args.n_max} options "
+              f"(e.g. {', '.join(wide[:5])}); pass --n-max")
+        return None
     tok, model = infer.load(args.model, args.base)
     overlong = _overlong_ids(tok, rows, args.max_len)
     if overlong and not args.skip_overlong:
@@ -441,7 +459,8 @@ def _letter_logits_for(args) -> tuple[list[dict], list[list[float]], list[str]] 
         return None
     skip = set(overlong)
     rows = [r for r in rows if r["id"] not in skip]
-    return rows, infer.letter_logits(model, tok, rows, max_len=args.max_len, batch_tokens=args.batch_tokens), overlong
+    return rows, infer.letter_logits(model, tok, rows, max_len=args.max_len, batch_tokens=args.batch_tokens,
+                                     n_letters=args.n_max), overlong
 
 
 def cmd_train(args) -> int:
@@ -485,7 +504,7 @@ def cmd_eval(args) -> int:
               "probs": readout.probs(z, n=len(r["letters"]), temperature=temps.get(r["type"], 1.0))}
              for r, z in zip(rows, logits)]
     report = metrics.evaluate(preds)
-    report["run"] = {"model": args.model, "data": args.data, "max_len": args.max_len,
+    report["run"] = {"model": args.model, "data": args.data, "max_len": args.max_len, "n_max": args.n_max,
                      "n_skipped_overlong": len(overlong), "skipped_overlong_ids": overlong}
     _write_json(Path(args.out), report)
     print(json.dumps(report, indent=2))
@@ -503,7 +522,7 @@ def cmd_calibrate(args) -> int:
              for r, z in zip(rows, logits)]
     temps = fit_temperatures(items)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    write_calibration(args.out, temps, {"model": args.model, "data": args.data, "n": len(items),
+    write_calibration(args.out, temps, {"model": args.model, "data": args.data, "n": len(items), "n_max": args.n_max,
                                               "n_skipped_overlong": len(overlong), "skipped_overlong_ids": overlong})
     print(json.dumps(temps))
     return 0
@@ -675,6 +694,9 @@ def make_parser() -> argparse.ArgumentParser:
         p.add_argument("--out", required=True)
         p.add_argument("--max-len", type=int, default=4096)
         p.add_argument("--batch-tokens", type=int, default=16384)
+        p.add_argument("--n-max", type=int, default=None,
+                       help="letters read per row (default: n_max in <model>/train_config.json, else 6); "
+                            "rows with more options are an error")
         p.add_argument("--skip-overlong", action="store_true",
                        help="leave rows longer than --max-len out (ids recorded in the output JSON); default is an error")
         if name == "eval":

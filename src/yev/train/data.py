@@ -8,7 +8,7 @@ import random
 from yev.format import LETTERS
 from yev.train.targets import smooth_target
 
-N_MAX = 6
+N_MAX = 6  # Stage 0 default; Stage 1 configs set n_max up to 10 (letters A-J)
 
 
 def load_rows(path: str) -> list[dict]:
@@ -68,12 +68,15 @@ def overlong_ids(tokenizer, rows: list[dict], max_len: int) -> list[str]:
     return [r["id"] for r in rows if len(prompt_ids(tokenizer, r["messages"])) > max_len]
 
 
-def encode(row: dict, tokenizer, max_len: int) -> dict | None:
+def encode(row: dict, tokenizer, max_len: int, n_max: int = N_MAX) -> dict | None:
+    """Encoded row (target padded to n_max), or None when the prompt is longer than max_len."""
+    n = len(row["letters"])
+    if n > n_max:
+        raise ValueError(f"{row['id']}: {n} options exceeds n_max = {n_max}")
     ids = prompt_ids(tokenizer, row["messages"])
     if len(ids) > max_len:
         return None
-    n = len(row["letters"])
-    target = [row["target"].get(LETTERS[i], 0.0) for i in range(n)] + [0.0] * (N_MAX - n)
+    target = [row["target"].get(LETTERS[i], 0.0) for i in range(n)] + [0.0] * (n_max - n)
     return {"input_ids": ids, "answer_pos": len(ids) - 1, "n_letters": n, "target": target,
             "answer_letter": LETTERS.index(row["answer"]), "weight": float(row.get("weight", 1.0)),
             "type": row["type"], "id": row["id"], "unit": unit_of(row), "twin_of": row.get("twin_of"),
@@ -88,10 +91,16 @@ def subsample_units(rows: list[dict], fraction: float, seed: int) -> list[dict]:
     return [r for r in rows if unit_of(r) in keep]
 
 
-def encode_all(rows, tokenizer, max_len_plain, max_len_examples, eps_hard, eps_ordinal, twin_rate, seed):
+def encode_all(rows, tokenizer, max_len_plain, max_len_examples, eps_hard, eps_ordinal, twin_rate, seed,
+               n_max: int = N_MAX):
+    """Smoothed, encoded rows (plus twins); rows longer than their max_len or with more than n_max
+    options are dropped and counted."""
     rng = random.Random(seed)
-    out, stats = [], {"kept": 0, "dropped_overlong": 0}
+    out, stats = [], {"kept": 0, "dropped_overlong": 0, "dropped_n_max": 0}
     for r in rows:
+        if len(r["letters"]) > n_max:
+            stats["dropped_n_max"] += 1
+            continue
         r = {**r, "target": smooth_target(r["target"], r["type"], eps_hard, eps_ordinal)}
         batch = [r]
         if twin_rate > 0 and rng.random() < twin_rate:
@@ -100,7 +109,7 @@ def encode_all(rows, tokenizer, max_len_plain, max_len_examples, eps_hard, eps_o
                 batch.append(tw)
         n_user = sum(m["role"] == "user" for m in r["messages"])
         max_len = max_len_examples if n_user > 1 else max_len_plain
-        encs = [encode(x, tokenizer, max_len) for x in batch]
+        encs = [encode(x, tokenizer, max_len, n_max) for x in batch]
         if encs[0] is None:
             stats["dropped_overlong"] += 1
             continue
@@ -109,13 +118,17 @@ def encode_all(rows, tokenizer, max_len_plain, max_len_examples, eps_hard, eps_o
     return out, stats
 
 
-def build_batches(encoded: list[dict], token_budget: int, seed: int, window: int = 50) -> list[list[int]]:
+def build_batches(encoded: list[dict], token_budget: int, seed: int, window: int = 50,
+                  n_max: int = N_MAX) -> list[list[int]]:
     """Pack whole units into batches whose padded size (rows x longest row) stays within token_budget.
 
     Units are shuffled with `seed`, then sorted by length inside windows of `window` units so rows of
     similar length share a batch. A unit that alone exceeds the budget becomes its own batch.
-    Deterministic for a given seed.
+    Deterministic for a given seed. Rows encoded for a different n_max are an error.
     """
+    wide = [e.get("id", "?") for e in encoded if "target" in e and len(e["target"]) != n_max]
+    if wide:
+        raise ValueError(f"{len(wide)} rows do not match n_max = {n_max} (e.g. {', '.join(wide[:5])})")
     groups: dict[str, list[int]] = {}
     for i, e in enumerate(encoded):
         groups.setdefault(e["unit"], []).append(i)

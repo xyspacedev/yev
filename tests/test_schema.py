@@ -41,9 +41,17 @@ def test_bad_key_rejected():
 
 
 def test_choice_option_count_bounds():
-    seven = [Option(f"o{i}", "d") for i in range(7)]
-    with pytest.raises(SchemaError, match="2-6"):
-        make(options=seven, gold="o0").validate()
+    eleven = [Option(f"o{i}", "d") for i in range(11)]
+    with pytest.raises(SchemaError, match="2-10"):
+        make(options=eleven, gold="o0").validate()
+    with pytest.raises(SchemaError, match="2-10"):
+        make(options=[Option("o0", "d")], gold="o0").validate()
+
+
+def test_choice_accepts_up_to_ten_options():
+    for n in (7, 10):
+        opts = [Option(f"o{i}", "d") for i in range(n)]
+        assert len(make(options=opts, gold="o0").validate().keys) == n
 
 
 def test_noul_requires_yes_no_in_order():

@@ -69,8 +69,8 @@ class Decision:
                 fail(f"bad option key {o.key!r}")
             if not o.description.strip():
                 fail(f"empty description for {o.key!r}")
-        if self.type == "choice" and not 2 <= len(keys) <= 6:
-            fail(f"choice needs 2-6 options, got {len(keys)}")
+        if self.type == "choice" and not 2 <= len(keys) <= 10:
+            fail(f"choice needs 2-10 options, got {len(keys)}")
         if self.type == "noul" and tuple(keys) != NOUL_KEYS:
             fail(f"noul options must be {NOUL_KEYS} in order, got {keys}")
         if self.type == "score" and not 3 <= len(keys) <= 11:

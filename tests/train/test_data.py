@@ -26,7 +26,7 @@ def test_encode_answer_pos_is_last_prompt_token(tok, make_row):
 def test_overlong_rows_dropped_and_counted(tok, make_row):
     long_row = make_row("L", {"A": "x", "B": "y"}, "A", state="w " * 600)
     enc, stats = encode_all([long_row, make_row("s", {"A": "x", "B": "y"}, "A")], tok, 200, 400, 0.05, 0.1, 0.0, 0)
-    assert stats == {"kept": 1, "dropped_overlong": 1}
+    assert stats == {"kept": 1, "dropped_overlong": 1, "dropped_n_max": 0}
 
 def test_subsample_keeps_whole_units(make_row):
     rows = [make_row(f"c{i}-{j}", {"A": "x", "B": "y"}, "A", cluster=f"c{i}") for i in range(10) for j in range(3)]

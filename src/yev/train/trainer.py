@@ -15,10 +15,9 @@ import torch
 
 from yev import provenance
 from yev.train import losses as L
+from yev.format import LETTERS
 from yev.train.data import N_MAX, build_batches, encode_all, letter_token_ids, load_rows, subsample_units
 from yev.train.infer import logits_at
-
-LETTERS6 = "ABCDEF"
 
 
 @dataclass
@@ -54,6 +53,7 @@ class TrainConfig:
     save_every: int = 500
     log_every: int = 10
     max_steps: int | None = None
+    n_max: int = N_MAX  # letters A.. per row; 6 in Stage 0, up to 10 in Stage 1
 
     @classmethod
     def from_json(cls, path: str) -> "TrainConfig":
@@ -110,16 +110,17 @@ def _batch_loss(cfg, model, items, letter_ids, pad_id, device):
     inp, att = _collate(items, pad_id, device)
     pos = torch.tensor([e["answer_pos"] for e in items], device=device)
     last = logits_at(model, inp, att, pos).float()                                 # [B, V]
-    letter = last[:, letter_ids]                                                   # [B, 6]
-    mask = torch.tensor([[i < e["n_letters"] for i in range(N_MAX)] for e in items], device=device)
+    letter = last[:, letter_ids]                                                   # [B, n_max]
+    mask = torch.tensor([[i < e["n_letters"] for i in range(cfg.n_max)] for e in items], device=device)
     target = torch.tensor([e["target"] for e in items], device=device)
     weight = torch.tensor([e["weight"] for e in items], device=device)
     answer_ids = letter_ids[torch.tensor([e["answer_letter"] for e in items], device=device)]
     parts = {"ce": L.ce_soft(letter, target, mask, weight), "vocab": L.full_vocab_ce(last, answer_ids, weight)}
     loss = parts["ce"] + cfg.lambda_vocab * parts["vocab"]
     logp = L.masked_log_softmax(letter, mask)
-    key_idx = [{k: LETTERS6.index(Lt) for Lt, k in e["letters"].items()} for e in items]
-    gold_key = [e["letters"][LETTERS6[e["answer_letter"]]] for e in items]
+    letters = LETTERS[:cfg.n_max]
+    key_idx = [{k: letters.index(Lt) for Lt, k in e["letters"].items()} for e in items]
+    gold_key = [e["letters"][letters[e["answer_letter"]]] for e in items]
     if cfg.lambda_pair:
         parts["pair"] = L.pair_margin(logp, _pairs(items, key_idx, gold_key), cfg.pair_margin)
         loss = loss + cfg.lambda_pair * parts["pair"]
@@ -193,20 +194,20 @@ def train(cfg: TrainConfig, tokenizer=None, model=None) -> dict:
     if cfg.fraction < 1.0:
         rows = subsample_units(rows, cfg.fraction, cfg.seed)
     enc, stats = encode_all(rows, tokenizer, cfg.max_len_plain, cfg.max_len_examples, cfg.eps_hard,
-                            cfg.eps_ordinal, cfg.twin_rate, cfg.seed)
+                            cfg.eps_ordinal, cfg.twin_rate, cfg.seed, n_max=cfg.n_max)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = _wrap(cfg, model).to(device)
-    letter_ids = torch.tensor(letter_token_ids(tokenizer), device=device)
+    letter_ids = torch.tensor(letter_token_ids(tokenizer, cfg.n_max), device=device)
     pad_id = getattr(tokenizer, "pad_token_id", None)
     if pad_id is None:
         pad_id = getattr(tokenizer, "eos_token_id", None) or 0
     # Each epoch reshuffles units with seed + epoch. max_steps, when set, overrides epochs (as in HF
     # Trainer): training runs exactly max_steps optimizer steps, adding epochs if the data runs out.
-    per_epoch = len(build_batches(enc, cfg.token_budget, cfg.seed))
+    per_epoch = len(build_batches(enc, cfg.token_budget, cfg.seed, n_max=cfg.n_max))
     epochs = cfg.epochs
     if cfg.max_steps:
         epochs = max(1, math.ceil(cfg.max_steps * cfg.grad_accum / max(per_epoch, 1)))
-    batches = [b for ep in range(epochs) for b in build_batches(enc, cfg.token_budget, cfg.seed + ep)]
+    batches = [b for ep in range(epochs) for b in build_batches(enc, cfg.token_budget, cfg.seed + ep, n_max=cfg.n_max)]
     total_steps = math.ceil(len(batches) / cfg.grad_accum)
     if cfg.max_steps:
         total_steps = min(total_steps, cfg.max_steps)
