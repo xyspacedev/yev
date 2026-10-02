@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 data/
 .pytest_cache/
+
+# release weights (local only until publish)
+release/yev-4b/weights/
