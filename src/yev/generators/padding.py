@@ -31,6 +31,9 @@ EVAL_SPLITS = ("dev", "calibration")
 MAX_TRAIN_TOKENS = 12288  # target_tokens bounds the padded state; the prompt must fit on top of hi
 TOKENIZER_NAME = "Qwen/Qwen3.5-4B-Base"
 ATTEMPTS = 30
+# many_options golds come from a keyword rule over the state; invoice text ("invoice number", "amount due",
+# "remit-to") could contradict it. Exact family match, so many_options_intent stays allowed.
+PAD_EXCLUDED_FAMILIES = {"many_options"}
 QUESTION_PREFIX = "About the forwarded item: "
 HEURISTIC_FACTOR = 2.0
 RULE_SENSITIVE_FAMILIES = ("returns_v2", "date_number_drills", "returns_policy", "action_review")
@@ -115,7 +118,7 @@ def pad(rows: list[Decision], distractors: list[str], target_tokens: tuple[int, 
         distractor_ids: list[str] | None = None, count: Callable[[str], int] | None = None,
         allow_heuristic: bool = False, skipped: list[tuple[str, str]] | None = None) -> list[Decision]:
     """`skipped`, when given, receives (row id, reason) with reason too_long, no_distractor, same_title
-    or length_unmet."""
+    length_unmet or excluded_family."""
     lo, hi = target_tokens
     if not 0 < lo <= hi <= MAX_TRAIN_TOKENS:
         raise PaddingError(f"target_tokens {target_tokens} must satisfy 0 < lo <= hi <= {MAX_TRAIN_TOKENS}")
@@ -144,6 +147,9 @@ def pad(rows: list[Decision], distractors: list[str], target_tokens: tuple[int, 
     out: list[Decision] = []
     for row in rows:
         rng = random.Random(f"{seed}:{row.id}")
+        if row.family in PAD_EXCLUDED_FAMILIES:
+            skipped.append((row.id, "excluded_family"))
+            continue
         title = _title(row.state)
         usable = [i for i, t in enumerate(distractors) if _title(t) != title and row.state not in t]
         own = cnt(row.state) + cnt(FORWARDED_OPEN) + cnt(FORWARDED_CLOSE) + 4

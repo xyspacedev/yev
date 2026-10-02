@@ -155,3 +155,13 @@ def test_cli_requires_tokenizer_unless_allowed(tmp_path, monkeypatch):
             "--out", str(tmp_path / "o.jsonl"), "--target-tokens", "2000:3000"]
     assert cli.main(argv) == 2
     assert cli.main([*argv, "--allow-heuristic"]) == 0
+
+
+def test_many_options_excluded_but_intent_allowed():
+    base = row()
+    excl = Decision(**{**base.__dict__, "id": "mo", "family": "many_options"})
+    ok = Decision(**{**base.__dict__, "id": "mi", "family": "many_options_intent"})
+    skipped = []
+    out = pad([excl, ok], DOCS, (300, 600), seed=1, count=count, skipped=skipped)
+    assert [p.metadata["orig_id"] for p in out] == ["mi"]
+    assert skipped == [("mo", "excluded_family")]
