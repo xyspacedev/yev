@@ -281,3 +281,33 @@ def test_five_token_short_item_matches_exactly_but_not_contained():
     fp = build_benchmark_fingerprints({"intents": ["Where is my new card?"]})
     assert overlaps_any(dec(1, "Customer: where is my new card please"), fp) is None
     assert overlaps_any(dec(2, "where is my new CARD"), fp) == "intents"
+
+
+# --- Fix round 3: per-item thresholds, exact short items up to 9 tokens, strict benchmarks -------
+
+def test_nine_token_item_copied_verbatim_inside_row_drops():
+    fp = build_benchmark_fingerprints({"intents": ["Please send me a new card to my home."]})  # 9 tokens, 2 grams
+    assert overlaps_any(dec(1, "Hi, please send me a new card to my home address. Thanks"), fp) == "intents"
+    assert overlaps_any(dec(2, "please send me a new card to my home"), fp) == "intents"
+    assert overlaps_any(dec(3, "Hi, please send me a new card to my office."), fp) is None
+
+
+def test_eight_and_nine_token_items_exact_match_hashes_stored():
+    fp = build_benchmark_fingerprints({"intents": ["one two three four five six seven eight",
+                                                   "one two three four five six seven eight nine"]})
+    assert set(fp.short["intents"]) == {8, 9}
+
+
+def test_mostly_stoplisted_item_caught_by_remaining_grams():
+    # STOCK's 3 grams are shared with y and stoplisted; x keeps only the gram ending in "purple"
+    fp = build_benchmark_fingerprints({"x": [f"{STOCK} purple"], "y": [STOCK]})
+    assert len(fp.grams["x"]) == 1
+    assert overlaps_any(dec(1, f"Note: anything else i can assist you with today purple, ok"), fp) == "x"
+    assert overlaps_any(dec(2, f"Note: {STOCK}, ok"), fp) is None
+
+
+def test_strict_benchmark_exempt_from_stoplist():
+    eight = " ".join(B1.split()[:8])
+    fp = build_benchmark_fingerprints({"decidebench": [B1], "x": [B1]})
+    assert fp.meta["stoplist"]["dropped"]["decidebench"] == 0
+    assert overlaps_any(dec(1, f"Intro. {eight} outro."), fp) == "decidebench"

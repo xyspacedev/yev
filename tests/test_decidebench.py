@@ -89,7 +89,8 @@ ALLOWED_TEST_SET_READERS = {"decidebench.py", "filters/contamination.py", "bench
 
 
 def test_only_allowed_modules_touch_the_test_set():
-    """AST-based guard: only decidebench.py and filters/contamination.py can access test set."""
+    """AST-based guard: only decidebench.py, filters/contamination.py, bench/decidebench.py and
+    filters/benchmarks.py can access the test set."""
     src = Path(__file__).resolve().parents[1] / "src" / "yev"
     for py in src.rglob("*.py"):
         relative_path = py.relative_to(src).as_posix()

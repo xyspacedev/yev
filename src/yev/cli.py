@@ -677,8 +677,10 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--in", dest="inp", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--no-embed", action="store_true", help="skip the embedding filter (tests only)")
-    p.add_argument("--benchmarks", help="fingerprints JSON from yev bench fingerprint; drops rows sharing an 8-gram "
-                                        "with any reported benchmark (reason benchmark:<name>)")
+    p.add_argument("--benchmarks", help="fingerprints JSON from yev bench fingerprint; drops a row (reason "
+                                        "benchmark:<name>) that shares 3 distinct 8-grams with one benchmark item "
+                                        "(all of them if the item has fewer; any one for DecideBench), or whose state "
+                                        "equals an item of up to 9 tokens or contains one of 6-7 tokens")
     p.set_defaults(func=cmd_filter)
 
     p = sub.add_parser("shortcut", help="down-weight shortcut-solvable public rows, drop solved synthetic clusters")
