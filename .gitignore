@@ -5,4 +5,4 @@ data/
 .pytest_cache/
 
 # release weights (local only until publish)
-release/yev-4b/weights/
+release/*/weights/
