@@ -23,6 +23,7 @@ from __future__ import annotations
 import glob
 import hashlib
 import json
+import os
 import random
 import re
 from collections import Counter, defaultdict
@@ -33,7 +34,7 @@ from yev import licences
 from yev.schema import Decision, Option, write_jsonl
 
 NAME = "skill_atlas"
-DEFAULT_ROOT = Path("/Users/choyiny/workspace/skill-atlas")
+DEFAULT_ROOT = Path(os.environ.get("YEV_SKILL_ATLAS", "../skill-atlas"))
 
 SPDX_KEEP = ("MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC")
 
