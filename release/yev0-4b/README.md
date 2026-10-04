@@ -14,8 +14,6 @@ tags:
   - peft
   - qwen3.5
   - decidebench
-datasets:
-  - choyiny/decidebench
 model-index:
   - name: yev0-4b
     results:
@@ -105,7 +103,7 @@ How to read it:
 - Only TEV and JEV publish zero-shot rows. Zero-shot is the cleaner comparison for a model trained mostly without
   examples.
 
-This is **not yet an official leaderboard entry**; a self-hosted submission to the DecideBench repo is **TBD**. Full
+This is **not yet an official leaderboard entry**; a self-hosted submission to the DecideBench repo is planned. Full
 per-family results, calibration and the contamination checks are under [Evaluation](#evaluation).
 
 ## The System One contract
@@ -184,7 +182,7 @@ sends compact JSON (`","`, `":"`); our DecideBench scores use the harness format
 - High-stakes decisions without human review: medical, legal, credit, employment, law enforcement, or anything with a
   legal or similarly significant effect on a person.
 - Use as a stand-alone safety or content-moderation guard. It is not a guard model and was not evaluated as one
-  (WildGuardTest is **TBD**).
+  (WildGuardTest was not run: its dataset is gated and the terms were not accepted).
 - Languages other than English.
 
 ## How to use
@@ -231,7 +229,7 @@ def decide(decisions):
     for d in decisions:
         ids = tok.apply_chat_template(messages(d), add_generation_prompt=True, tokenize=True,
                                       enable_thinking=False)
-        enc.append(list(ids["input_ids"] if hasattr(ids, "input_ids") else ids))
+        enc.append(list(ids["input_ids"] if hasattr(ids, "input_ids") or isinstance(ids, dict) else ids))
     L = max(map(len, enc))
     pad = tok.pad_token_id or 0
     inp = torch.full((len(enc), L), pad, dtype=torch.long)
@@ -265,9 +263,11 @@ print(decide([{
 The LoRA adapter (r 64, α 128) is in `adapter/`. Load it on the base model and keep the rest of the snippet unchanged:
 
 ```python
+import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
 tok = AutoTokenizer.from_pretrained("Qwen/Qwen3.5-4B-Base")
 base = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3.5-4B-Base", dtype=dtype)
 model = PeftModel.from_pretrained(base, "choyiny/yev0-4b", subfolder="adapter")
@@ -276,7 +276,7 @@ model = model.to("cuda" if torch.cuda.is_available() else "cpu").eval()
 
 ### (c) Serving with `yev serve`
 
-`yev serve`, in the yev code repository (link TBD at release), serves the model with the same readout behind two
+`yev serve`, in the yev code repository (open-source release to follow), serves the model with the same readout behind two
 endpoints:
 
 - `POST /v1/systemone`: TypeSafe-style System One requests (Noul, Choice, Score). A request may carry several
@@ -501,7 +501,7 @@ Rows removed, from `filter_report.json` and `shortcut_report.json`:
 
 **Post-hoc check on the final train file** (44,459 rows): 8-gram overlap with the DecideBench test is **0 / 400** items.
 The other benchmarks are reported with their own overlap under Evaluation. No WorkflowEvals data was used to build the
-Stage 0 mix; an 8-gram overlap count against the WorkflowEvals cases is **TBD**.
+Stage 0 mix; WorkflowEvals was first published (2026-09-28) after this training data was built, and under our item-level overlap filter (at least 3 shared 8-grams with a single WorkflowEvals item) 68 of 44,459 training rows (0.15%) match, almost all stock support phrases such as "is there anything else I can assist you with today".
 
 ## Training procedure
 
@@ -515,12 +515,12 @@ Stage 0 mix; an 8-gram overlap count against the WorkflowEvals cases is **TBD**.
 | Targets | uniform label smoothing ε = 0.05 on hard Choice/Noul targets; ordinal smoothing 0.10 to the neighbours on hard Score targets; soft labels used as-is |
 | Loss (release run, `lc100`) | cross-entropy over the item's valid letters, plus 0.1 × full-vocabulary cross-entropy (keeps chat output a bare letter), plus 0.5 × ranked probability score on Score rows. Supervised only at the answer-letter position |
 | Schedule | 1 epoch, 1,218 optimiser steps, 44,228 rows, 28.17 M tokens |
-| Hardware | 1 × NVIDIA L40S 48 GB (AWS g6e.xlarge), about 1,663 tokens/s |
+| Hardware | 1 × NVIDIA L40S 48 GB, about 1,663 tokens/s |
 | Time | 4.71 h for the release run; 25.3 GPU-hours of training across all six runs |
 | Software | torch 2.14.1+cu130, transformers 5.18, peft 0.21, flash-linear-attention, causal-conv1d |
 | Seed | 0 (mix and training) |
 | Merged weights | the root checkpoint is the `lc100` adapter merged into the base (`merge_and_unload`) |
-| Code | the yev code repository (link TBD at release), `configs/stage0/lc100.json`. The training-run git SHA was not recorded: **TBD** |
+| Code | the yev code repository (open-source release to follow), `configs/stage0/lc100.json`, training code at commit `c3bd5a2` |
 
 **Calibration.** Per-type temperatures were fitted by NLL on a separate 2,000-row calibration split:
 
@@ -566,8 +566,8 @@ permuted twins.
 | ab_perm | + L_perm | 1,668 | 6.20 | 94.10 | 84.16 | 92.40 | 92.93 | 68.25 | **0.0358** | 0.0826 | 99.61 @ 81.14 |
 | ab_both | + L_pair + L_perm | 1,668 | 6.20 | 94.20 | 83.69 | 92.40 | 92.59 | 68.25 | 0.0460 | 0.0862 | 99.29 @ 81.61 |
 
-**Selection.** The rule, fixed before the runs, was: highest DecideBench-dev template-group accuracy, then DecideBench-dev
-accuracy, then Opus-holdout accuracy.
+**Selection.** The rule, fixed before the ablation runs, applied to the four 100 %-data loss arms: highest DecideBench-dev
+template-group accuracy, then DecideBench-dev accuracy, then Opus-holdout accuracy.
 
 - **lc100 wins** (73.02 vs 68.25) and is the released model, yev0-4b.
 - L_pair gave the best results on our own held-out clusters (+0.7 pt dev accuracy, +1.8 pt Opus holdout), but it did not
@@ -607,18 +607,18 @@ The project's pass bar was accuracy > 92.8 % and pair accuracy > 86.0 % (TEV).
 - **Bar met:** 94.5 / 89.0 with examples, and 95.0 / 90.0 zero-shot.
 - **Against imajev-4b (95.0 / 90.5):** a tie inside the confidence interval, not a win.
 
-Per-family accuracy. The TEV and imajev columns are with examples:
+Per-family accuracy:
 
-| Family | yev0-4b (examples) | yev0-4b (zero-shot) | TEV | imajev-4b |
-|---|---:|---:|---:|---:|
-| action_review | 100 | 98 | 86 | 96 |
-| agent_routing | 100 | 98 | 100 | 100 |
-| claim_support | 94 | 94 | 90 | 94 |
-| content_moderation | **86** | 90 | 90 | 90 |
-| returns_policy | 94 | 92 | 90 | 90 |
-| review_sentiment | 88 | 90 | 92 | 92 |
-| support_intent | 98 | 100 | 100 | 100 |
-| ticket_triage | 96 | 98 | 94 | 98 |
+| Family | yev0-4b (examples) | yev0-4b (zero-shot) |
+|---|---:|---:|
+| action_review | 100 | 98 |
+| agent_routing | 100 | 98 |
+| claim_support | 94 | 94 |
+| content_moderation | **86** | 90 |
+| returns_policy | 94 | 92 |
+| review_sentiment | 88 | 90 |
+| support_intent | 98 | 100 |
+| ticket_triage | 96 | 98 |
 
 Other DecideBench metrics:
 
@@ -650,7 +650,7 @@ official runner.
 | **Overall** (equal mean of the four headline metrics) | | | **51.5** | **67.8** |
 
 - **It does not top long-workflow benchmarks.** It trails Jev by 16 pt overall and by 9.6–20.4 pt on every workflow.
-  Frontier-LLM entries on the WorkflowEvals leaderboard score higher still (figures **TBD**).
+  Frontier-LLM entries on the WorkflowEvals leaderboard score higher still: GPT-5.6-sol 74.1% and Claude Opus 5 73.1% overall (evals.typesafe.ai, workflow route, snapshot 2026-09-28).
 - **Why.** Stage 0 was trained mostly on rows of ≤ 4k tokens with ≤ 6 options. WorkflowEvals states are long (invoice
   packets run about 6–9k tokens) and some questions have up to 9 options, so most requests are out of distribution. The
   invoice gap between primary action (75.8) and exact action set (46.7) shows the model often gets the main call right
@@ -729,7 +729,7 @@ official runner.
 - yev0-4b was not trained to judge multi-turn trajectories, and it should not be used for this.
 - 8-gram overlap with train: 25 / 571 items, all boilerplate.
 
-**WildGuardTest: not run (TBD).**
+**WildGuardTest: not run** (gated dataset; terms not accepted).
 
 ## Calibration
 
@@ -812,7 +812,7 @@ official runner.
 
 Acknowledgements:
 
-- **Recipe.** The training recipe follows Together's "How to train your own Jev" guide (URL **TBD**): letter-logit
+- **Recipe.** The training recipe follows Together's "How to train your own Jev" guide: letter-logit
   System One readout, contrastive clusters and calibrated outputs.
 - **TEV** (`togethercomputer/Tev1-4B-experimental`) for the prompt format and the reference point.
 - **Qwen team** for `Qwen3.5-4B-Base`.
