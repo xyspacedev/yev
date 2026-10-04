@@ -1,0 +1,43 @@
+yev0-4b
+Copyright 2026 Cho Yin Yong
+
+This model (merged weights and LoRA adapter) is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Base model
+----------
+Built on Qwen/Qwen3.5-4B-Base by the Qwen team, licensed under the Apache License, Version 2.0.
+https://huggingface.co/Qwen/Qwen3.5-4B-Base
+
+Training data
+-------------
+The model was trained on data that includes the third-party datasets below, each used under its own licence.
+No dataset content is redistributed in this repository. Rows used in the Stage 0 train split are given in brackets.
+
+  VitaminC                       tals/vitaminc                                   CC-BY-SA-3.0          (2,503)
+  WANLI                          alisawuffles/WANLI                              CC-BY-4.0             (1,000)
+  MultiNLI                       nyu-mll/multi_nli                               OANC + CC-BY-SA-3.0   (687)
+  Counterfactual SNLI            sagnikrayc/snli-cf-kaushik                      CC-BY-4.0             (485)
+  negation-dataset (Jina AI)     jinaai/negation-dataset                         Apache-2.0            (328)
+  DynaBench (DynaBenchTrain)     montehoover/DynaBench                           MIT                   (2,500)
+  Aegis 2.0 (NVIDIA)             nvidia/Aegis-AI-Content-Safety-Dataset-2.0      CC-BY-4.0             (1,121)
+  civil_comments                 google/civil_comments                           CC0-1.0               (379)
+  agent-action-safety            karanxa/agent-action-safety-dataset             Apache-2.0            (2,500)
+  eikos-decisions (core)         caiovicentino1/eikos-decisions                  CC-BY-4.0             (1,992)
+  RuleTaker                      tasksource/ruletaker                            Apache-2.0            (508)
+  Banking77                      legacy-datasets/banking77                       CC-BY-4.0             (990)
+  CLINC150 (plus)                clinc/clinc_oos                                 CC-BY-3.0             (1,010)
+  fast-decisions (17 configs)    fastino/fast-decisions                          Apache-2.0            (1,508)
+  help-desk-tickets              tasksource/help-desk-tickets                    CC-BY-4.0             (103)
+  IT support tickets             tasksource/it-support-tickets                   CC-BY-4.0             (233)
+  CVSS v3 severity               AgileRLArena/vulnerability-scores-cvss-v3       CC-BY-4.0             (664)
+  GoEmotions (simplified)        google-research-datasets/go_emotions            Apache-2.0            (500)
+  BoolQ                          google/boolq                                    CC-BY-SA-3.0          (520)
+  ARC-Challenge / ARC-Easy       allenai/ai2_arc                                 CC-BY-SA-4.0          (111 / 112)
+  CommonsenseQA                  tau/commonsense_qa                              MIT                   (259)
+
+skill-atlas rows (5,000) are decisions about public agent skills (SKILL.md files) from repositories licensed MIT or
+Apache-2.0. Per-skill attribution (repository, path, licence) is in ATTRIBUTION.json.
+
+The remaining training rows are synthetic: rule-generated rows and rows written by Claude Opus 5.5 for this project.
+
+The prompt format (system prompt and JSON user turn) is that of TEV (togethercomputer/Tev1-4B-experimental).
