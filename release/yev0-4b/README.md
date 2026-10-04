@@ -276,7 +276,7 @@ model = model.to("cuda" if torch.cuda.is_available() else "cpu").eval()
 
 ### (c) Serving with `yev serve`
 
-`yev serve`, in the yev code repository (open-source release to follow), serves the model with the same readout behind two
+`yev serve`, in the [yev code repository](https://github.com/xyspacedev/yev), serves the model with the same readout behind two
 endpoints:
 
 - `POST /v1/systemone`: TypeSafe-style System One requests (Noul, Choice, Score). A request may carry several
@@ -520,7 +520,7 @@ Stage 0 mix; WorkflowEvals was first published (2026-09-28) after this training 
 | Software | torch 2.14.1+cu130, transformers 5.18, peft 0.21, flash-linear-attention, causal-conv1d |
 | Seed | 0 (mix and training) |
 | Merged weights | the root checkpoint is the `lc100` adapter merged into the base (`merge_and_unload`) |
-| Code | the yev code repository (open-source release to follow), `configs/stage0/lc100.json`, training code at commit `c3bd5a2` |
+| Code | the [yev code repository](https://github.com/xyspacedev/yev), `configs/stage0/lc100.json`, training code at commit `c3bd5a2` |
 
 **Calibration.** Per-type temperatures were fitted by NLL on a separate 2,000-row calibration split:
 
