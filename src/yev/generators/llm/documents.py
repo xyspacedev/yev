@@ -7,8 +7,8 @@ gold = the sample shares when they split). A document is kept only if at least 7
 Documents skip edit attribution (Plan Ruling 2): check-score writes final/synthetic_docs.jsonl directly.
 
 Task 7b adds two steps after the check, each a prepare/score pair using the checker file protocol:
-- no-document control (nodoc): every surviving question is asked twice with the document replaced by NODOC_STATE;
-  a question the small model gets right both times without the document is dropped, then the 70% document rule
+- no-document control (nodoc): every surviving question is asked NODOC_SAMPLES (3) times with the document replaced
+  by NODOC_STATE; a question the small model gets right every time without the document is dropped, then the 70% rule
   is applied again;
 - difficulty signal (diff): every remaining question is asked once with its document; rows the small model gets
   wrong get weight HARD_WEIGHT.
@@ -56,9 +56,9 @@ MULTI_STEP_SHARE = 0.6
 WIDE_OPTIONS = (7, 10)  # at least WIDE_SHARE of each document's choice questions have this many options
 WIDE_SHARE = 0.5
 NODOC_STATE = "(The document is not available.)"
-NODOC_SAMPLES = 2
+NODOC_SAMPLES = 3  # a guesser drops a k-option question with chance ~1/k^3
 NODOC_PART_SIZE = 40
-DIFF_PART_SIZE = 30
+DIFF_PART_SIZE = 10  # each item carries a whole document; 30 reached Haiku's context limit
 HARD_WEIGHT = 1.5
 log = logging.getLogger(__name__)
 
@@ -603,7 +603,7 @@ def score_nodoc(rows: list[Decision], ingested: list[Decision], key: dict,
     return kept, {
         "questions_in": len(rows),
         "docs_in": len(docs_in),
-        "dropped_both_correct": len(dropped_ids),
+        "dropped_all_correct": len(dropped_ids),
         "drop_rate": round(len(dropped_ids) / max(len(rows), 1), 4),
         "nodoc_correct": {str(k): sum(d.metadata["nodoc_correct"] == k for d in marked)
                           for k in range(NODOC_SAMPLES + 1)},

@@ -436,7 +436,7 @@ import math
 from dataclasses import replace as _replace
 
 from yev.generators.llm.documents import (
-    HARD_WEIGHT, NODOC_STATE, SKILLS, prepare_diff, prepare_nodoc, render_nodoc_prompt, score_difficulty,
+    HARD_WEIGHT, NODOC_SAMPLES, NODOC_STATE, SKILLS, prepare_diff, prepare_nodoc, render_nodoc_prompt, score_difficulty,
     score_nodoc,
 )
 
@@ -470,6 +470,9 @@ def test_new_kinds_planned_evenly_and_default_per_batch():
     import inspect
     assert inspect.signature(plan_doc_batches).parameters["per_batch"].default == 3
     assert cli.make_parser().parse_args(["synth", "doc-plan", "--dir", "x", "--docs", "1"]).per_batch == 3
+    parse = cli.make_parser().parse_args
+    assert parse(["synth", "diff-prepare", "--dir", "x"]).part_size == 10 == documents.DIFF_PART_SIZE
+    assert parse(["synth", "nodoc-prepare", "--dir", "x"]).part_size == 40
     for n in (8, 50, 420, 421):
         batches = plan_doc_batches(n, seed=0)
         per_kind = Counter()
@@ -528,14 +531,15 @@ def test_nodoc_state_exact_two_samples_independent_shuffles():
     rows = _rows(n_docs=3, n_q=6)
     parts, key = prepare_nodoc(rows, part_size=40, seed=0)
     items = [it for _, its in parts for it in its]
-    assert len(items) == 2 * len(rows) and {it["state"] for it in items} == {NODOC_STATE}
+    assert NODOC_SAMPLES == 3
+    assert len(items) == 3 * len(rows) and {it["state"] for it in items} == {NODOC_STATE}
     assert all(set(it) == {"item_id", "state", "question", "options"} for it in items)
-    assert all(name.startswith(("sheet-0-", "sheet-1-")) for name, _ in parts)
+    assert all(name.startswith(("sheet-0-", "sheet-1-", "sheet-2-")) for name, _ in parts)
     by_q = {}
     for v in key.values():
         by_q.setdefault(v["decision"], []).append(v["letters"])
-    assert all(len(v) == 2 for v in by_q.values())
-    assert any(a != b for a, b in by_q.values())  # shuffled independently per sample
+    assert all(len(v) == 3 for v in by_q.values())
+    assert any(len({json.dumps(x, sort_keys=True) for x in v}) == 3 for v in by_q.values())  # independent shuffles
     for _, its in parts:  # never two questions of one document in a part
         docs = [key[it["item_id"]]["decision"].rsplit(":", 1)[0] for it in its]
         assert len(docs) == len(set(docs))
@@ -545,16 +549,22 @@ def test_nodoc_state_exact_two_samples_independent_shuffles():
     assert p.endswith(tail[tail.index("Write your answers"):])  # output format unchanged
 
 
-def test_nodoc_drops_question_correct_in_both_samples():
+def test_nodoc_drops_question_only_when_all_three_samples_correct():
     rows = _rows(n_docs=1, n_q=10)
     parts, key = prepare_nodoc(rows, part_size=40, seed=0)
-    both, one = "doc:0:q0", "doc:0:q1"
-    answers = _pick_answers(parts, key, lambda d, s: "k1" if d == both or (d == one and s == 0) else "k0")
-    kept, report = score_nodoc(rows, rows, key, answers)
+    three, two, one = "doc:0:q0", "doc:0:q1", "doc:0:q2"
+
+    def pick(d, s):
+        right = d == three or (d == two and s in (0, 1)) or (d == one and s == 0)
+        return "k1" if right else "k0"
+    kept, report = score_nodoc(rows, rows, key, _pick_answers(parts, key, pick))
     by_id = {d.id: d for d in kept}
-    assert both not in by_id and len(kept) == 9  # 90% of written survive: document kept
-    assert by_id[one].metadata["nodoc_correct"] == 1 and by_id["doc:0:q2"].metadata["nodoc_correct"] == 0
-    assert report["dropped_both_correct"] == 1 and report["questions_in"] == 10
+    assert three not in by_id and len(kept) == 9  # 3 of 3 correct: dropped; 90% of written survive
+    assert by_id[two].metadata["nodoc_correct"] == 2  # 2 of 3 correct: kept
+    assert by_id[one].metadata["nodoc_correct"] == 1 and by_id["doc:0:q3"].metadata["nodoc_correct"] == 0
+    assert all(d.metadata["nodoc_answered"] == 3 for d in kept)
+    assert report["dropped_all_correct"] == 1 and report["questions_in"] == 10
+    assert report["nodoc_correct"] == {"0": 7, "1": 1, "2": 1, "3": 1}
     assert report["by_skill"][SKILLS[0]]["dropped"] == 1
     assert report["by_doc_kind"]["support_thread"]["dropped"] == 1
     assert report["by_question_type"]["choice"]["questions"] == 10
@@ -580,12 +590,13 @@ def test_nodoc_reapplies_document_rule():
 def test_nodoc_missing_answers_never_drop():
     rows = _rows(n_docs=1, n_q=4)
     parts, key = prepare_nodoc(rows, part_size=40, seed=0)
-    answers = _pick_answers(parts, key, lambda d, s: None if (d == "doc:0:q0" and s == 1) or d == "doc:0:q1"
+    # q0: right in the 2 answered samples, third missing -> kept; q1: no answers at all
+    answers = _pick_answers(parts, key, lambda d, s: None if (d == "doc:0:q0" and s == 2) or d == "doc:0:q1"
                             else ("k1" if d == "doc:0:q0" else "k0"))
     kept, report = score_nodoc(rows, rows, key, answers)
     by_id = {d.id: d for d in kept}
     assert len(kept) == 4 and report["missing_samples"] == 2
-    assert by_id["doc:0:q0"].metadata["nodoc_correct"] == 1 and by_id["doc:0:q0"].metadata["nodoc_answered"] == 1
+    assert by_id["doc:0:q0"].metadata["nodoc_correct"] == 2 and by_id["doc:0:q0"].metadata["nodoc_answered"] == 2
     assert by_id["doc:0:q1"].metadata["nodoc_answered"] == 0
 
 
@@ -673,12 +684,12 @@ def test_cli_doc_steps_in_order(tmp_path, monkeypatch, capsys):
     nodoc_sheets = sorted((run / "nodoc").glob("sheet-*.jsonl"))
     assert nodoc_sheets and all(s.with_suffix(".prompt.md").exists() for s in nodoc_sheets)
     items = [json.loads(l) for s in nodoc_sheets for l in s.read_text().splitlines()]
-    assert len(items) == 24 and {it["state"] for it in items} == {NODOC_STATE}
+    assert len(items) == 36 and {it["state"] for it in items} == {NODOC_STATE}
     assert "not available" in nodoc_sheets[0].with_suffix(".prompt.md").read_text()
     assert cli.main(["synth", "nodoc-prepare", "--dir", str(run)]) == 0  # idempotent before answers exist
     assert sorted((run / "nodoc").glob("sheet-*.jsonl")) == nodoc_sheets
     assert cli.main(["synth", "nodoc-score", "--dir", str(run)]) == 2  # no answers yet
-    # the no-doc model gets d0's next_action right in both samples (dropped) and nothing else
+    # the no-doc model gets a0's next_action right in all 3 samples (dropped) and nothing else
     _answer_all(run, "nodoc", "nodoc-key.json",
                 lambda d, s: d.gold if (d.cluster_id.endswith(":a0") and d.metadata["question_name"] == "next_action")
                 else next(k for k in d.keys if k != d.gold))
@@ -687,9 +698,9 @@ def test_cli_doc_steps_in_order(tmp_path, monkeypatch, capsys):
     assert cli.main(["synth", "nodoc-score", "--dir", str(run)]) == 0
     assert cli.main(["synth", "nodoc-score", "--dir", str(run)]) == 0  # idempotent
     final = list(read_jsonl(run / "final" / "synthetic_docs.jsonl"))
-    assert len(final) == 11 and all(d.metadata["nodoc_correct"] in (0, 1, 2) for d in final)
+    assert len(final) == 11 and all(d.metadata["nodoc_correct"] in (0, 1, 2, 3) for d in final)
     pilot = json.loads((run / "reports" / "pilot.json").read_text())
-    assert pilot["nodoc"]["dropped_both_correct"] == 1 and pilot["final_questions"] == 12
+    assert pilot["nodoc"]["dropped_all_correct"] == 1 and pilot["final_questions"] == 12
     assert pilot["nodoc"]["final_questions"] == 11
     assert cli.main(["synth", "diff-score", "--dir", str(run)]) == 2
 
@@ -731,7 +742,7 @@ def test_cli_doc_steps_in_order(tmp_path, monkeypatch, capsys):
         assert "nodoc_correct" in d.metadata and d.metadata["skill"] in SKILLS
     pilot = json.loads((run / "reports" / "pilot.json").read_text())
     assert pilot["difficulty"]["missing"] == 1 and pilot["difficulty"]["missed"] == 2
-    assert pilot["nodoc"]["dropped_both_correct"] == 1
+    assert pilot["nodoc"]["dropped_all_correct"] == 1
     assert set(pilot["difficulty"]["by_option_count"]) == {"4", "5", "7", "8", "9"}
     # --force reruns an earlier step and discards the later ones
     assert cli.main(["synth", "nodoc-score", "--dir", str(run), "--force"]) == 0
