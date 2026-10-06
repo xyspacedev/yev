@@ -48,7 +48,7 @@ KEEP_DOC_SHARE = 0.7
 INJECTION_SHARE = 0.05
 CHECK_PART_SIZE = 10  # items per checker part; each item carries a whole document
 WORDS_PER_TOKEN = 0.7
-PER_BATCH = 3
+PER_BATCH = 2  # 3 documents per writer meant single writes of ~33k tokens; the pilot proved 2
 # Task 7b: what a question needs, recorded by the writer as `skill`; all but lookup are multi-step
 SKILLS = ("lookup", "multi_hop", "arithmetic", "temporal", "conflict", "exception")
 MULTI_STEP_SKILLS = frozenset(SKILLS) - {"lookup"}
@@ -187,7 +187,7 @@ At least {multi} of the {q} questions in each document (60% or more) must be mul
 the document answers them. Each multi-step question needs one of these:
 - combining facts from two or more separated parts of the document;
 - computing a date, duration, amount or count that is not stated anywhere in the document;
-- resolving a conflict, where a later update supersedes an earlier statement;
+- resolving a conflict between statements, where the document states which update governs and why;
 - applying a rule with an exception stated elsewhere in the document.
 
 Give every question a `skill`, the main step a reader needs to answer it, exactly one of:
@@ -195,9 +195,21 @@ Give every question a `skill`, the main step a reader needs to answer it, exactl
 - `multi_hop`: facts from two or more separated parts must be combined;
 - `arithmetic`: an amount or count that is not stated must be computed;
 - `temporal`: a date, deadline or duration that is not stated must be worked out;
-- `conflict`: a later update supersedes an earlier statement, and only the later one is right;
+- `conflict`: two statements disagree, and the document states which update governs and why;
 - `exception`: a rule applies, but an exception stated elsewhere changes the outcome.
 Only `lookup` is single-step. Label honestly: a question is multi-step only if one sentence cannot settle it.
+
+### Deciding rules are in the document
+For every `conflict`, `exception`, `temporal` and `arithmetic` question, the rule that decides it is written in the
+document itself, before or alongside the facts it applies to. The reader must never have to assume a convention:
+- precedence: which statement or update governs when two disagree (latest signed version, the order of
+  amendments, a named document that prevails) and who has authority to change things (for example, only the account
+  manager may waive a fee, so a support agent's promise does not count);
+- exceptions: the scope of each exception, meaning which cases, dates, customers or amounts it covers and which it
+  does not;
+- counting conventions: business or calendar days, whether start and end dates are inclusive, the time zone of
+  every deadline and timestamp that matters, and rounding (to the cent, to whole units, up or down).
+A later message does not win just because it is later; it wins because a rule stated in the document says so.
 
 ### Distractors
 Every document contains distractors: near-miss facts a careless reader would use, such as a different order's
@@ -301,6 +313,11 @@ def _parse_question(q: dict, *, state: str, cid: str, meta: dict) -> tuple[Decis
         return None, "invalid_question"
 
 
+def is_wide(d: Decision) -> bool:
+    """A choice question with WIDE_OPTIONS (7-10) options."""
+    return d.type == "choice" and WIDE_OPTIONS[0] <= len(d.options) <= WIDE_OPTIONS[1]
+
+
 def _skill(raw) -> str | None:
     skill = str(raw or "").strip().lower()
     return skill if skill in SKILLS else None
@@ -358,7 +375,7 @@ def parse_doc(obj: dict, *, batch: dict, index: int, run_name: str | None, count
     if sum(d.metadata["skill"] in MULTI_STEP_SKILLS for d in out) < MULTI_STEP_SHARE * len(out) - 1e-9:
         reasons["docs_below_multistep_share"] += 1
     choices = [d for d in out if d.type == "choice"]
-    wide = sum(WIDE_OPTIONS[0] <= len(d.options) <= WIDE_OPTIONS[1] for d in choices)
+    wide = sum(is_wide(d) for d in choices)
     if choices and wide < WIDE_SHARE * len(choices) - 1e-9:
         reasons["docs_below_wide_option_share"] += 1
     lo, hi = QUESTIONS_PER_DOC
@@ -508,7 +525,7 @@ def doc_pilot_report(specs: list[dict], ingest: dict, ingested: list[Decision], 
         "question_survival_by_topic": by_topic,
         "question_survival_by_skill": by_skill,
         "multi_step_share": round(sum(skill_of(d) in MULTI_STEP_SKILLS for d in ingested) / max(n_ing_q, 1), 4),
-        "wide_choice_share": round(sum(len(d.options) >= WIDE_OPTIONS[0] for d in choices) / max(len(choices), 1), 4),
+        "wide_choice_share": round(sum(is_wide(d) for d in choices) / max(len(choices), 1), 4),
         "shape_targets_missed": {k: ingest.get(k, 0) for k in ("bad_skill", "docs_below_multistep_share",
                                                               "docs_below_wide_option_share")},
         "soft_label_share": round(sum(d.soft_gold is not None for d in kept) / max(len(kept), 1), 4),
@@ -568,9 +585,11 @@ Each question was written about a long document (a support thread, incident repo
 transcript, shift handover, invoice email thread, contract with amendments or security alert log), but the
 document is not available: every item's `state` is "{NODOC_STATE}".
 
-For every item, still choose the single option that is most likely correct, using only the question and the
-options. Do not refuse, skip an item or answer that you cannot tell: give your best guess for every item. The items
-in this file are independent of each other.
+For every item, still choose the single option that is most likely correct for the unseen document, using only
+the question and the options. Do not refuse or skip an item: give your best guess for every item. An option such as
+"insufficient information", "the document does not settle it" or "none of these" is an ordinary option: pick it only
+if you think it is the most likely correct answer for the unseen document, not because the document is withheld
+from you. The items in this file are independent of each other.
 
 Do not open any other file or directory. Answer from the item alone.
 
@@ -582,22 +601,29 @@ Then reply with only the number of answers written.
 
 def score_nodoc(rows: list[Decision], ingested: list[Decision], key: dict,
                 answers: list[dict]) -> tuple[list[Decision], dict]:
-    """Drop a question when every one of its NODOC_SAMPLES no-document answers picks the gold, then re-apply the
-    document rule (KEEP_DOC_SHARE of the questions written). Records metadata nodoc_correct (gold picks) and
-    nodoc_answered (usable answers); a question with a missing sample is never dropped."""
+    """Drop a choice question when every one of its NODOC_SAMPLES no-document answers picks the gold, then re-apply
+    the document rule (KEEP_DOC_SHARE of the questions written). Records metadata nodoc_correct (gold picks) and
+    nodoc_answered (usable answers); a question with a missing sample is never dropped.
+
+    Score questions are never dropped here: their levels keep their order, so the samples are identical inputs and
+    are not independent. They are still sampled and marked, and reported separately (score_all_correct)."""
     stats: Counter = Counter()
     votes = collect_votes(key, answers, stats)
     marked: list[Decision] = []
     for d in rows:
         v = votes.get(d.id, [])
         marked.append(_with_meta(d, nodoc_correct=v.count(d.gold), nodoc_answered=len(v)))
-    dropped_ids = {d.id for d in marked
-                   if d.metadata["nodoc_answered"] >= NODOC_SAMPLES and d.metadata["nodoc_correct"] >= NODOC_SAMPLES}
+    def all_correct(d):
+        return d.metadata["nodoc_answered"] >= NODOC_SAMPLES and d.metadata["nodoc_correct"] >= NODOC_SAMPLES
+
+    dropped_ids = {d.id for d in marked if d.type == "choice" and all_correct(d)}
+    scores = [d for d in marked if d.type == "score"]
+    score_all = sum(all_correct(d) for d in scores)
     survivors = [d for d in marked if d.id not in dropped_ids]
     kept = keep_docs(survivors, ingested)
 
-    def dropped(d):
-        return d.id in dropped_ids
+    def dropped(d):  # None leaves score questions out of the drop breakdowns
+        return None if d.type == "score" else d.id in dropped_ids
 
     docs_in = {d.cluster_id for d in rows}
     return kept, {
@@ -605,6 +631,11 @@ def score_nodoc(rows: list[Decision], ingested: list[Decision], key: dict,
         "docs_in": len(docs_in),
         "dropped_all_correct": len(dropped_ids),
         "drop_rate": round(len(dropped_ids) / max(len(rows), 1), 4),
+        "choice_questions": len(rows) - len(scores),
+        "choice_drop_rate": round(len(dropped_ids) / max(len(rows) - len(scores), 1), 4),
+        "score_questions": len(scores),
+        "score_all_correct": score_all,  # would have been dropped; kept by ruling
+        "score_all_correct_rate": round(score_all / max(len(scores), 1), 4),
         "nodoc_correct": {str(k): sum(d.metadata["nodoc_correct"] == k for d in marked)
                           for k in range(NODOC_SAMPLES + 1)},
         "missing_samples": sum(d.metadata["nodoc_answered"] < NODOC_SAMPLES for d in marked),

@@ -93,8 +93,10 @@ DOC_KINDS: dict[str, tuple[str, tuple[str, ...]]] = {
     ),
     "contract_amendment": (
         "A services or supply contract excerpt followed by numbered amendments and side letters that change "
-        "prices, dates, service levels, notice periods and termination terms; a later amendment overrides an "
-        "earlier clause only where it says so.",
+        "prices, dates, service levels, notice periods and termination terms. The contract states its own "
+        "precedence rule (for example, a signed amendment prevails over the clauses it names, from its stated "
+        "effective date, and side letters bind only if signed by the named authorised signatories); each "
+        "amendment says which clauses it replaces, and clauses it does not mention stay in force.",
         ("effective_terms", "numeric_reasoning", "claim_support", "commitment_check", "policy_compliance",
          "next_action", "risk"),
     ),

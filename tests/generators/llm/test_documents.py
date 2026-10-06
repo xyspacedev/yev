@@ -1,4 +1,9 @@
+import inspect
 import json
+import math
+import re
+from collections import Counter
+from dataclasses import replace as _replace
 
 import pytest
 
@@ -7,7 +12,9 @@ from yev.generators.common import SYNTH_LICENCE, make_cluster
 from yev.generators.llm import documents
 from yev.generators.llm.check import prepare_sheets, render_checker_prompt, score_answers
 from yev.generators.llm.documents import (
-    FAMILY, doc_writer_prompt, ingest_docs, keep_docs, plan_doc_batches, score_doc_answers,
+    FAMILY, HARD_WEIGHT, NODOC_SAMPLES, NODOC_STATE, SKILLS, doc_writer_prompt, ingest_docs, keep_docs,
+    plan_doc_batches, prepare_diff, prepare_nodoc, render_nodoc_prompt, score_difficulty, score_doc_answers,
+    score_nodoc,
 )
 from yev.generators.llm.families import DOC_KINDS, DOC_TOPICS, DOMAINS
 from yev.schema import Option, read_jsonl
@@ -432,15 +439,6 @@ def test_answer_prefix_only_when_letter_is_last():
 
 # --- Task 7b: harder documents, skills, new kinds, no-document control, difficulty signal ------------
 
-import math
-from dataclasses import replace as _replace
-
-from yev.generators.llm.documents import (
-    HARD_WEIGHT, NODOC_SAMPLES, NODOC_STATE, SKILLS, prepare_diff, prepare_nodoc, render_nodoc_prompt, score_difficulty,
-    score_nodoc,
-)
-
-
 def test_writer_prompt_harder_requirements():
     for b in plan_doc_batches(24, per_batch=3, seed=0):
         p = doc_writer_prompt(b, "/tmp/o.jsonl")
@@ -451,8 +449,16 @@ def test_writer_prompt_harder_requirements():
         assert "distractor" in p.lower() and "superseded" in p
         for skill in SKILLS:
             assert f"`{skill}`" in p
-        for step in ("two or more separated parts", "not stated", "supersedes", "exception stated elsewhere"):
+        for step in ("two or more separated parts", "not stated", "the document states which update governs and why",
+                     "exception stated elsewhere"):
             assert step in p, step
+        assert "supersedes an earlier statement" not in p  # no blanket "later wins"
+        rules = p[p.index("### Deciding rules are in the document"):p.index("### Distractors")]
+        for skill in ("conflict", "exception", "temporal", "arithmetic"):
+            assert f"`{skill}`" in rules, skill
+        for need in ("precedence", "authority", "scope", "business or calendar days", "inclusive", "time zone",
+                     "rounding"):
+            assert need in rules, need
         example = json.loads(next(l for l in p.splitlines() if l.startswith('{"doc_id"')))
         assert all(q["skill"] in SKILLS for q in example["questions"])
         assert any(len(q["options"]) >= 7 for q in example["questions"] if q["type"] == "choice")
@@ -467,9 +473,8 @@ def test_new_kinds_planned_evenly_and_default_per_batch():
         description, topics = DOC_KINDS[kind]
         assert description and set(topics) <= set(DOC_TOPICS)
         assert {DOC_TOPICS[t][0] for t in topics} == {"choice", "score"}
-    import inspect
-    assert inspect.signature(plan_doc_batches).parameters["per_batch"].default == 3
-    assert cli.make_parser().parse_args(["synth", "doc-plan", "--dir", "x", "--docs", "1"]).per_batch == 3
+    assert inspect.signature(plan_doc_batches).parameters["per_batch"].default == 2
+    assert cli.make_parser().parse_args(["synth", "doc-plan", "--dir", "x", "--docs", "1"]).per_batch == 2
     parse = cli.make_parser().parse_args
     assert parse(["synth", "diff-prepare", "--dir", "x"]).part_size == 10 == documents.DIFF_PART_SIZE
     assert parse(["synth", "nodoc-prepare", "--dir", "x"]).part_size == 40
@@ -478,13 +483,10 @@ def test_new_kinds_planned_evenly_and_default_per_batch():
         per_kind = Counter()
         for b in batches:
             per_kind[b["doc_kind"]] += b["n_docs"]
-            assert 1 <= b["n_docs"] <= 3
+            assert 1 <= b["n_docs"] <= 2
         assert set(per_kind) == set(DOC_KINDS) and sum(per_kind.values()) == n
         assert max(per_kind.values()) - min(per_kind.values()) <= 1, (n, per_kind)
         assert len({b["batch_id"] for b in batches}) == len(batches)
-
-
-from collections import Counter  # noqa: E402
 
 
 def test_ingest_keeps_skill(tmp_path):
@@ -545,6 +547,7 @@ def test_nodoc_state_exact_two_samples_independent_shuffles():
         assert len(docs) == len(set(docs))
     p = render_nodoc_prompt("/r/nodoc/s.jsonl", "/r/nodoc/a.jsonl", "J")
     assert "not available" in p and "most likely" in p and "Do not refuse" in p and "gold" not in p
+    assert "ordinary option" in p and "not because the document is withheld" in p
     tail = render_checker_prompt("/r/nodoc/s.jsonl", "/r/nodoc/a.jsonl", max_letter="J", documents=True)
     assert p.endswith(tail[tail.index("Write your answers"):])  # output format unchanged
 
@@ -569,6 +572,26 @@ def test_nodoc_drops_question_only_when_all_three_samples_correct():
     assert report["by_doc_kind"]["support_thread"]["dropped"] == 1
     assert report["by_question_type"]["choice"]["questions"] == 10
     assert all(d.state == "long document 0" for d in kept)  # final rows keep their document
+
+
+def test_nodoc_never_drops_score_questions():
+    rows = _rows(n_docs=1, n_q=4)
+    levels = [Option(str(i), f"Level {i}.") for i in range(4)]
+    rows[0] = _replace(rows[0], type="score", options=levels, gold="2")
+    rows[1] = _replace(rows[1], type="score", options=levels, gold="1")
+    parts, key = prepare_nodoc(rows, part_size=40, seed=0)
+    right = {"doc:0:q0", "doc:0:q2"}  # a score and a choice question, each 3 of 3 correct
+    by_row = {d.id: d for d in rows}
+    kept, report = score_nodoc(rows, rows, key, _pick_answers(
+        parts, key, lambda d, s: by_row[d].gold if d in right else next(k for k in by_row[d].keys
+                                                                       if k != by_row[d].gold)))
+    by_id = {d.id: d for d in kept}
+    assert "doc:0:q0" in by_id and by_id["doc:0:q0"].metadata["nodoc_correct"] == 3  # score: kept
+    assert "doc:0:q2" not in by_id  # choice: dropped
+    assert report["dropped_all_correct"] == 1
+    assert report["score_all_correct"] == 1 and report["score_questions"] == 2
+    assert report["score_all_correct_rate"] == 0.5
+    assert report["by_question_type"]["choice"]["dropped"] == 1 and "score" not in report["by_question_type"]
 
 
 def test_nodoc_reapplies_document_rule():
@@ -700,16 +723,15 @@ def test_cli_doc_steps_in_order(tmp_path, monkeypatch, capsys):
     final = list(read_jsonl(run / "final" / "synthetic_docs.jsonl"))
     assert len(final) == 11 and all(d.metadata["nodoc_correct"] in (0, 1, 2, 3) for d in final)
     pilot = json.loads((run / "reports" / "pilot.json").read_text())
-    assert pilot["nodoc"]["dropped_all_correct"] == 1 and pilot["final_questions"] == 12
-    assert pilot["nodoc"]["final_questions"] == 11
+    assert pilot["nodoc"]["dropped_all_correct"] == 1 and pilot["questions_survived_check"] == 12
+    # the top-level final counts follow final/ after every scoring step
+    assert pilot["nodoc"]["final_questions"] == 11 == pilot["final_questions"] and pilot["final_docs"] == 2
     assert cli.main(["synth", "diff-score", "--dir", str(run)]) == 2
 
     assert cli.main(["synth", "diff-prepare", "--dir", str(run)]) == 0
     diff_sheets = sorted((run / "diff").glob("sheet-*.jsonl"))
     items = [json.loads(l) for s in diff_sheets for l in s.read_text().splitlines()]
     assert len(items) == 11 and NODOC_STATE not in {it["state"] for it in items}
-    import re
-
     def norm(text):  # same checker wording; only the paths (and the letter range of the part) differ
         return re.sub(r"`[^`]*`", "`<path>`", re.sub(r"<A-[A-J]>", "<A-?>", text))
     diff_prompt = diff_sheets[0].with_suffix(".prompt.md").read_text()
@@ -742,12 +764,14 @@ def test_cli_doc_steps_in_order(tmp_path, monkeypatch, capsys):
         assert "nodoc_correct" in d.metadata and d.metadata["skill"] in SKILLS
     pilot = json.loads((run / "reports" / "pilot.json").read_text())
     assert pilot["difficulty"]["missing"] == 1 and pilot["difficulty"]["missed"] == 2
+    assert pilot["final_questions"] == 11 and pilot["final_docs"] == 2
     assert pilot["nodoc"]["dropped_all_correct"] == 1
     assert set(pilot["difficulty"]["by_option_count"]) == {"4", "5", "7", "8", "9"}
     # --force reruns an earlier step and discards the later ones
     assert cli.main(["synth", "nodoc-score", "--dir", str(run), "--force"]) == 0
     assert not (run / "diff").exists() and not (run / "private" / "diff-key.json").exists()
-    assert "difficulty" not in json.loads((run / "reports" / "pilot.json").read_text())
+    pilot = json.loads((run / "reports" / "pilot.json").read_text())
+    assert "difficulty" not in pilot and pilot["final_questions"] == 11
     assert all(d.weight == 1.0 for d in read_jsonl(run / "final" / "synthetic_docs.jsonl"))
 
 

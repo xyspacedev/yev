@@ -532,6 +532,8 @@ def _write_doc_final(run: Path, rows, drop: tuple[str, ...] = (), section: str |
     pilot = json.loads(pilot_path.read_text()) if pilot_path.exists() else {}
     for name in drop:
         pilot.pop(name, None)
+    pilot["final_questions"] = len(rows)  # the top-level counts always describe the current final/
+    pilot["final_docs"] = len({d.cluster_id for d in rows})
     if section:
         pilot[section] = report
     _write_json(pilot_path, pilot)
