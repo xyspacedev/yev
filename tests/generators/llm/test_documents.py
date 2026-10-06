@@ -45,8 +45,11 @@ def doc(doc_id, n_words=5000, questions=None):
 
 def write_run(tmp_path, docs_by_batch, n_docs=None):
     run = tmp_path / "run"
-    n = n_docs or sum(len(d) for d in docs_by_batch)
-    batches = plan_doc_batches(n, per_batch=max(len(d) for d in docs_by_batch), seed=0)
+    # one batch per list of documents (the plan spreads documents over kinds, so build the specs directly)
+    template = plan_doc_batches(1, per_batch=1, seed=0)[0]
+    batches = [{**template, "batch_id": f"doc-batch-{i:03d}", "n_docs": len(docs),
+                "domains": list(DOMAINS[i:i + len(docs)]), "injection_docs": []}
+               for i, docs in enumerate(docs_by_batch)]
     (run / "batches").mkdir(parents=True)
     (run / "written").mkdir()
     for b, docs in zip(batches, docs_by_batch):
@@ -75,7 +78,7 @@ def test_plan_doc_batches_ranges():
 
 def test_doc_kinds_and_topics_described():
     assert set(DOC_KINDS) == {"support_thread", "incident_report", "agent_trace", "multi_turn_transcript",
-                              "ops_handover"}
+                              "ops_handover", "invoice_email_thread", "contract_amendment", "security_alert_log"}
     for kind, (description, topics) in DOC_KINDS.items():
         assert description and topics and set(topics) <= set(DOC_TOPICS)
     for name, (qtype, description) in DOC_TOPICS.items():
@@ -83,7 +86,9 @@ def test_doc_kinds_and_topics_described():
 
 
 def test_writer_prompt_contains_no_benchmark_names():
-    for b in plan_doc_batches(10, per_batch=2, seed=0):
+    batches = plan_doc_batches(24, per_batch=3, seed=0)
+    assert {b["doc_kind"] for b in batches} == set(DOC_KINDS)
+    for b in batches:
         prompt = doc_writer_prompt(b, "/tmp/out.jsonl").lower()
         for name in ("WorkflowEvals", "evalsafe", "DecideBench", "JevBench", "R-Judge", "DynaBench"):
             assert name.lower() not in prompt
@@ -304,7 +309,8 @@ def test_cli_doc_pipeline_end_to_end(tmp_path, monkeypatch):
     run = tmp_path / "run"
     assert cli.main(["synth", "doc-plan", "--dir", str(run), "--docs", "3", "--per-batch", "2", "--seed", "0"]) == 0
     specs = sorted((run / "batches").glob("*.json"))
-    assert len(specs) == 2 and all(p.with_suffix(".prompt.md").exists() for p in specs)
+    # 3 documents over 8 kinds: three kinds get one document each, so three one-document batches
+    assert len(specs) == 3 and all(p.with_suffix(".prompt.md").exists() for p in specs)
     prompt = specs[0].with_suffix(".prompt.md").read_text()
     assert str((run / "written" / "doc-batch-000.jsonl").resolve()) in prompt
     for p in specs:
@@ -331,7 +337,7 @@ def test_cli_doc_pipeline_end_to_end(tmp_path, monkeypatch):
         for it in items:
             k = key[it["item_id"]]
             d = rows[k["decision"]]
-            want = d.gold if not (d.cluster_id.endswith("d1") and d.metadata["question_name"] in
+            want = d.gold if not ("doc-batch-002" in d.cluster_id and d.metadata["question_name"] in
                                   ("next_action", "escalation", "severity")) else \
                 next(x for x in d.keys if x != d.gold)
             out.append(json.dumps({"item_id": it["item_id"],
@@ -422,3 +428,320 @@ def test_answer_prefix_only_when_letter_is_last():
     assert parse_letter("Answer: J", 9) is None           # J is out of range for 9 options
     assert parse_letter("Answer: C.", 9) == "C"
     assert parse_letter("answer is (g)", 10) == "G"
+
+
+# --- Task 7b: harder documents, skills, new kinds, no-document control, difficulty signal ------------
+
+import math
+from dataclasses import replace as _replace
+
+from yev.generators.llm.documents import (
+    HARD_WEIGHT, NODOC_STATE, SKILLS, prepare_diff, prepare_nodoc, render_nodoc_prompt, score_difficulty,
+    score_nodoc,
+)
+
+
+def test_writer_prompt_harder_requirements():
+    for b in plan_doc_batches(24, per_batch=3, seed=0):
+        p = doc_writer_prompt(b, "/tmp/o.jsonl")
+        need = math.ceil(0.6 * b["questions_per_doc"])
+        assert f"At least {need} of the {b['questions_per_doc']} questions" in p and "60%" in p
+        assert "7 to 10 options" in p and "at least half of each document's choice questions" in p.lower()
+        assert "no filler" in p.lower() and "plausible" in p
+        assert "distractor" in p.lower() and "superseded" in p
+        for skill in SKILLS:
+            assert f"`{skill}`" in p
+        for step in ("two or more separated parts", "not stated", "supersedes", "exception stated elsewhere"):
+            assert step in p, step
+        example = json.loads(next(l for l in p.splitlines() if l.startswith('{"doc_id"')))
+        assert all(q["skill"] in SKILLS for q in example["questions"])
+        assert any(len(q["options"]) >= 7 for q in example["questions"] if q["type"] == "choice")
+        # pilot-proven rules stay
+        for phrase in ("rubric stated inside the document", "stated in the document", "benchmarks"):
+            assert phrase in p, phrase
+
+
+def test_new_kinds_planned_evenly_and_default_per_batch():
+    assert set(SKILLS) == {"lookup", "multi_hop", "arithmetic", "temporal", "conflict", "exception"}
+    for kind in ("invoice_email_thread", "contract_amendment", "security_alert_log"):
+        description, topics = DOC_KINDS[kind]
+        assert description and set(topics) <= set(DOC_TOPICS)
+        assert {DOC_TOPICS[t][0] for t in topics} == {"choice", "score"}
+    import inspect
+    assert inspect.signature(plan_doc_batches).parameters["per_batch"].default == 3
+    assert cli.make_parser().parse_args(["synth", "doc-plan", "--dir", "x", "--docs", "1"]).per_batch == 3
+    for n in (8, 50, 420, 421):
+        batches = plan_doc_batches(n, seed=0)
+        per_kind = Counter()
+        for b in batches:
+            per_kind[b["doc_kind"]] += b["n_docs"]
+            assert 1 <= b["n_docs"] <= 3
+        assert set(per_kind) == set(DOC_KINDS) and sum(per_kind.values()) == n
+        assert max(per_kind.values()) - min(per_kind.values()) <= 1, (n, per_kind)
+        assert len({b["batch_id"] for b in batches}) == len(batches)
+
+
+from collections import Counter  # noqa: E402
+
+
+def test_ingest_keeps_skill(tmp_path):
+    qs = [{**choice_q("next_action"), "skill": "multi_hop"}, {**choice_q("escalation"), "skill": "Temporal"},
+          {**choice_q("claim_support"), "skill": "guessing"}, choice_q("resolution_status")]
+    run, _ = write_run(tmp_path, [[doc("x", questions=qs)]])
+    stats = Counter()
+    rows = {d.metadata["question_name"]: d for d in ingest_docs(run, count=count_words, stats=stats)}
+    assert rows["next_action"].metadata["skill"] == "multi_hop"
+    assert rows["escalation"].metadata["skill"] == "temporal"
+    assert rows["claim_support"].metadata["skill"] is None and rows["resolution_status"].metadata["skill"] is None
+    assert stats["bad_skill"] == 2 and stats["questions_kept"] == 4
+
+
+def _rows(n_docs=2, n_q=5, n_opts=8, written=None):
+    out = []
+    for k in range(n_docs):
+        for j in range(n_q):
+            opts = [Option(f"k{i}", f"Option {i}.") for i in range(n_opts if j % 2 == 0 else 4)]
+            d = make_cluster(cluster_id=f"doc:{k}", family=FAMILY, source="synthetic_opus", qtype="choice",
+                             question=f"q{j}?", members=[(f"long document {k}", opts, "k1", None)])[0]
+            d.id = f"doc:{k}:q{j}"
+            d.metadata = {"doc_kind": ["support_thread", "contract_amendment"][k % 2], "question_name": f"t{j}",
+                          "skill": SKILLS[j % len(SKILLS)], "questions_written": written or n_q}
+            out.append(d)
+    return out
+
+
+def _pick_answers(parts, key, pick):
+    """pick(decision_id, sample) -> option key, or None for no answer."""
+    out = []
+    for _, items in parts:
+        for it in items:
+            k = key[it["item_id"]]
+            want = pick(k["decision"], k["sheet"])
+            if want is not None:
+                out.append({"item_id": it["item_id"],
+                            "letter": next(l for l, x in k["letters"].items() if x == want)})
+    return out
+
+
+def test_nodoc_state_exact_two_samples_independent_shuffles():
+    assert NODOC_STATE == "(The document is not available.)"
+    rows = _rows(n_docs=3, n_q=6)
+    parts, key = prepare_nodoc(rows, part_size=40, seed=0)
+    items = [it for _, its in parts for it in its]
+    assert len(items) == 2 * len(rows) and {it["state"] for it in items} == {NODOC_STATE}
+    assert all(set(it) == {"item_id", "state", "question", "options"} for it in items)
+    assert all(name.startswith(("sheet-0-", "sheet-1-")) for name, _ in parts)
+    by_q = {}
+    for v in key.values():
+        by_q.setdefault(v["decision"], []).append(v["letters"])
+    assert all(len(v) == 2 for v in by_q.values())
+    assert any(a != b for a, b in by_q.values())  # shuffled independently per sample
+    for _, its in parts:  # never two questions of one document in a part
+        docs = [key[it["item_id"]]["decision"].rsplit(":", 1)[0] for it in its]
+        assert len(docs) == len(set(docs))
+    p = render_nodoc_prompt("/r/nodoc/s.jsonl", "/r/nodoc/a.jsonl", "J")
+    assert "not available" in p and "most likely" in p and "Do not refuse" in p and "gold" not in p
+    tail = render_checker_prompt("/r/nodoc/s.jsonl", "/r/nodoc/a.jsonl", max_letter="J", documents=True)
+    assert p.endswith(tail[tail.index("Write your answers"):])  # output format unchanged
+
+
+def test_nodoc_drops_question_correct_in_both_samples():
+    rows = _rows(n_docs=1, n_q=10)
+    parts, key = prepare_nodoc(rows, part_size=40, seed=0)
+    both, one = "doc:0:q0", "doc:0:q1"
+    answers = _pick_answers(parts, key, lambda d, s: "k1" if d == both or (d == one and s == 0) else "k0")
+    kept, report = score_nodoc(rows, rows, key, answers)
+    by_id = {d.id: d for d in kept}
+    assert both not in by_id and len(kept) == 9  # 90% of written survive: document kept
+    assert by_id[one].metadata["nodoc_correct"] == 1 and by_id["doc:0:q2"].metadata["nodoc_correct"] == 0
+    assert report["dropped_both_correct"] == 1 and report["questions_in"] == 10
+    assert report["by_skill"][SKILLS[0]]["dropped"] == 1
+    assert report["by_doc_kind"]["support_thread"]["dropped"] == 1
+    assert report["by_question_type"]["choice"]["questions"] == 10
+    assert all(d.state == "long document 0" for d in kept)  # final rows keep their document
+
+
+def test_nodoc_reapplies_document_rule():
+    rows = _rows(n_docs=2, n_q=10)
+    parts, key = prepare_nodoc(rows, part_size=40, seed=0)
+    # doc 0 loses 3 of 10 (70%: kept); doc 1 loses 4 (60%: whole document dropped)
+    lose = {f"doc:0:q{j}" for j in range(3)} | {f"doc:1:q{j}" for j in range(4)}
+    kept, report = score_nodoc(rows, rows, key, _pick_answers(parts, key, lambda d, s: "k1" if d in lose else "k2"))
+    assert {d.cluster_id for d in kept} == {"doc:0"} and len(kept) == 7
+    assert report["docs_dropped_below_70pct"] == 1 and report["final_docs"] == 1 and report["final_questions"] == 7
+    # the 70% rule counts against the questions the writer wrote, not those that reached this step
+    written = _rows(n_docs=1, n_q=10, written=14)
+    parts, key = prepare_nodoc(written, part_size=40, seed=0)
+    kept, _ = score_nodoc(written, written, key,
+                          _pick_answers(parts, key, lambda d, s: "k1" if d == "doc:0:q0" else "k2"))
+    assert kept == []  # 9 of 14 written = 64%
+
+
+def test_nodoc_missing_answers_never_drop():
+    rows = _rows(n_docs=1, n_q=4)
+    parts, key = prepare_nodoc(rows, part_size=40, seed=0)
+    answers = _pick_answers(parts, key, lambda d, s: None if (d == "doc:0:q0" and s == 1) or d == "doc:0:q1"
+                            else ("k1" if d == "doc:0:q0" else "k0"))
+    kept, report = score_nodoc(rows, rows, key, answers)
+    by_id = {d.id: d for d in kept}
+    assert len(kept) == 4 and report["missing_samples"] == 2
+    assert by_id["doc:0:q0"].metadata["nodoc_correct"] == 1 and by_id["doc:0:q0"].metadata["nodoc_answered"] == 1
+    assert by_id["doc:0:q1"].metadata["nodoc_answered"] == 0
+
+
+def test_difficulty_weights_and_missing_answers():
+    rows = _rows(n_docs=3, n_q=4)
+    parts, key = prepare_diff(rows, part_size=30, seed=0)
+    items = [it for _, its in parts for it in its]
+    assert len(items) == len(rows) and {it["state"] for it in items} == {d.state for d in rows}
+    assert all(n.startswith("sheet-0-") for n, _ in parts)
+    wrong, missing = {"doc:0:q0", "doc:1:q2"}, {"doc:2:q3"}
+    answers = _pick_answers(parts, key, lambda d, s: None if d in missing else ("k0" if d in wrong else "k1"))
+    out, report = score_difficulty(rows, key, answers)
+    by_id = {d.id: d for d in out}
+    assert len(out) == len(rows)
+    assert {d.weight for d in out} <= {1.0, HARD_WEIGHT} and HARD_WEIGHT == 1.5
+    for d in out:
+        if d.id in wrong:
+            assert d.weight == 1.5 and d.metadata["small_model_correct"] is False
+        elif d.id in missing:
+            assert d.weight == 1.0 and "small_model_correct" not in d.metadata
+        else:
+            assert d.weight == 1.0 and d.metadata["small_model_correct"] is True
+    assert report["missing"] == 1 and report["answered"] == 11 and report["missed"] == 2
+    assert report["miss_rate"] == round(2 / 11, 4)
+    assert report["by_option_count"]["8"]["answered"] == 6 and report["by_option_count"]["8"]["missed"] == 2
+    assert set(report["by_skill"]) and set(report["by_doc_kind"])
+    # idempotent: scoring the scored rows again gives the same rows
+    again, _ = score_difficulty(out, key, answers)
+    assert [d.to_dict() for d in again] == [d.to_dict() for d in out]
+    assert by_id["doc:0:q0"].soft_gold is None
+
+
+# --- CLI: check-score -> nodoc-prepare -> nodoc-score -> diff-prepare -> diff-score ------------------
+
+def _skilled_doc(doc_id):
+    qs = [{**choice_q("next_action", n=8), "skill": "multi_hop"}, {**score_q("customer_sentiment"), "skill": "lookup"},
+          {**choice_q("escalation", "escalate", n=9), "skill": "temporal"},
+          {**choice_q("resolution_status", "wait"), "skill": "conflict"},
+          {**score_q("severity", "0", 4), "skill": "exception"},
+          {**choice_q("claim_support", "close", 7), "skill": "arithmetic"}]
+    return doc(doc_id, questions=qs)
+
+
+def _answer_all(run, sub, key_name, pick):
+    """pick(row, sample) -> option key or None. Writes answers-<part>.jsonl next to every sheet in run/sub."""
+    key = json.loads((run / "private" / key_name).read_text())
+    rows = {d.id: d for d in read_jsonl(run / "ingested.jsonl")}
+    for sheet in sorted((run / sub).glob("sheet-*.jsonl")):
+        out = []
+        for line in sheet.read_text().splitlines():
+            it = json.loads(line)
+            k = key[it["item_id"]]
+            want = pick(rows[k["decision"]], k["sheet"])
+            if want is not None:
+                out.append(json.dumps({"item_id": it["item_id"],
+                                       "letter": next(l for l, x in k["letters"].items() if x == want)}))
+        (run / sub / f"answers-{sheet.stem}.jsonl").write_text("\n".join(out) + "\n")
+
+
+def _checked_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(documents, "load_doc_counter", lambda allow_heuristic=False: (count_words, "test"))
+    run = tmp_path / "run"
+    assert cli.main(["synth", "doc-plan", "--dir", str(run), "--docs", "2", "--seed", "0"]) == 0
+    for i, p in enumerate(sorted((run / "batches").glob("*.json"))):
+        b = json.loads(p.read_text())
+        (run / "written" / f"{b['batch_id']}.jsonl").write_text(
+            "".join(json.dumps(_skilled_doc(f"{'ab'[i]}{k}")) + "\n" for k in range(b["n_docs"])))
+    assert cli.main(["synth", "doc-ingest", "--dir", str(run)]) == 0
+    assert cli.main(["synth", "check-prepare", "--dir", str(run)]) == 0
+    _answer_all(run, "check", "check-key.json", lambda d, s: d.gold)
+    return run
+
+
+def test_cli_doc_steps_in_order(tmp_path, monkeypatch, capsys):
+    run = _checked_run(tmp_path, monkeypatch)
+    for step in ("nodoc-prepare", "nodoc-score", "diff-prepare", "diff-score"):
+        assert cli.main(["synth", step, "--dir", str(run)]) == 2, step  # check-score has not run
+    assert "check-score" in capsys.readouterr().out
+    assert cli.main(["synth", "check-score", "--dir", str(run)]) == 0
+    assert cli.main(["synth", "nodoc-score", "--dir", str(run)]) == 2
+    assert cli.main(["synth", "diff-prepare", "--dir", str(run)]) == 2
+    assert "nodoc-score" in capsys.readouterr().out
+
+    assert cli.main(["synth", "nodoc-prepare", "--dir", str(run)]) == 0
+    nodoc_sheets = sorted((run / "nodoc").glob("sheet-*.jsonl"))
+    assert nodoc_sheets and all(s.with_suffix(".prompt.md").exists() for s in nodoc_sheets)
+    items = [json.loads(l) for s in nodoc_sheets for l in s.read_text().splitlines()]
+    assert len(items) == 24 and {it["state"] for it in items} == {NODOC_STATE}
+    assert "not available" in nodoc_sheets[0].with_suffix(".prompt.md").read_text()
+    assert cli.main(["synth", "nodoc-prepare", "--dir", str(run)]) == 0  # idempotent before answers exist
+    assert sorted((run / "nodoc").glob("sheet-*.jsonl")) == nodoc_sheets
+    assert cli.main(["synth", "nodoc-score", "--dir", str(run)]) == 2  # no answers yet
+    # the no-doc model gets d0's next_action right in both samples (dropped) and nothing else
+    _answer_all(run, "nodoc", "nodoc-key.json",
+                lambda d, s: d.gold if (d.cluster_id.endswith(":a0") and d.metadata["question_name"] == "next_action")
+                else next(k for k in d.keys if k != d.gold))
+    assert cli.main(["synth", "nodoc-prepare", "--dir", str(run)]) == 2  # would discard answers
+    capsys.readouterr()
+    assert cli.main(["synth", "nodoc-score", "--dir", str(run)]) == 0
+    assert cli.main(["synth", "nodoc-score", "--dir", str(run)]) == 0  # idempotent
+    final = list(read_jsonl(run / "final" / "synthetic_docs.jsonl"))
+    assert len(final) == 11 and all(d.metadata["nodoc_correct"] in (0, 1, 2) for d in final)
+    pilot = json.loads((run / "reports" / "pilot.json").read_text())
+    assert pilot["nodoc"]["dropped_both_correct"] == 1 and pilot["final_questions"] == 12
+    assert pilot["nodoc"]["final_questions"] == 11
+    assert cli.main(["synth", "diff-score", "--dir", str(run)]) == 2
+
+    assert cli.main(["synth", "diff-prepare", "--dir", str(run)]) == 0
+    diff_sheets = sorted((run / "diff").glob("sheet-*.jsonl"))
+    items = [json.loads(l) for s in diff_sheets for l in s.read_text().splitlines()]
+    assert len(items) == 11 and NODOC_STATE not in {it["state"] for it in items}
+    import re
+
+    def norm(text):  # same checker wording; only the paths (and the letter range of the part) differ
+        return re.sub(r"`[^`]*`", "`<path>`", re.sub(r"<A-[A-J]>", "<A-?>", text))
+    diff_prompt = diff_sheets[0].with_suffix(".prompt.md").read_text()
+    assert str((run / "diff").resolve()) in diff_prompt
+    assert norm(diff_prompt) == norm((run / "check" / "sheet-0-part-0.prompt.md").read_text())
+    assert cli.main(["synth", "nodoc-score", "--dir", str(run)]) == 2  # a later step has started
+    assert cli.main(["synth", "check-score", "--dir", str(run)]) == 2
+    # small model misses claim_support everywhere; one answer is missing
+    missing = {"n": 0}
+
+    def small(d, s):
+        if d.metadata["question_name"] == "resolution_status" and d.cluster_id.endswith(":a0") and not missing["n"]:
+            missing["n"] = 1
+            return None
+        return next(k for k in d.keys if k != d.gold) if d.metadata["question_name"] == "claim_support" else d.gold
+    _answer_all(run, "diff", "diff-key.json", small)
+    assert cli.main(["synth", "diff-score", "--dir", str(run)]) == 0
+    first = (run / "final" / "synthetic_docs.jsonl").read_text()
+    assert cli.main(["synth", "diff-score", "--dir", str(run)]) == 0
+    assert (run / "final" / "synthetic_docs.jsonl").read_text() == first  # idempotent
+    final = list(read_jsonl(run / "final" / "synthetic_docs.jsonl"))
+    assert len(final) == 11
+    for d in final:
+        if d.metadata["question_name"] == "claim_support":
+            assert d.weight == 1.5 and d.metadata["small_model_correct"] is False
+        elif d.metadata["question_name"] == "resolution_status" and d.cluster_id.endswith(":a0"):
+            assert d.weight == 1.0 and "small_model_correct" not in d.metadata
+        else:
+            assert d.weight == 1.0 and d.metadata["small_model_correct"] is True
+        assert "nodoc_correct" in d.metadata and d.metadata["skill"] in SKILLS
+    pilot = json.loads((run / "reports" / "pilot.json").read_text())
+    assert pilot["difficulty"]["missing"] == 1 and pilot["difficulty"]["missed"] == 2
+    assert pilot["nodoc"]["dropped_both_correct"] == 1
+    assert set(pilot["difficulty"]["by_option_count"]) == {"4", "5", "7", "8", "9"}
+    # --force reruns an earlier step and discards the later ones
+    assert cli.main(["synth", "nodoc-score", "--dir", str(run), "--force"]) == 0
+    assert not (run / "diff").exists() and not (run / "private" / "diff-key.json").exists()
+    assert "difficulty" not in json.loads((run / "reports" / "pilot.json").read_text())
+    assert all(d.weight == 1.0 for d in read_jsonl(run / "final" / "synthetic_docs.jsonl"))
+
+
+def test_cluster_runs_refuse_doc_steps(tmp_path):
+    run = tmp_path / "run"
+    assert cli.main(["synth", "plan", "--dir", str(run), "--clusters", "2", "--per-batch", "1", "--seed", "0"]) == 0
+    for step in ("nodoc-prepare", "nodoc-score", "diff-prepare", "diff-score"):
+        assert cli.main(["synth", step, "--dir", str(run)]) == 2

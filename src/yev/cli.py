@@ -329,7 +329,8 @@ def _refuse_doc_run(run: Path, what: str) -> bool:
 
 def cmd_synth_doc_plan(args) -> int:
     run = Path(args.dir)
-    _clear(run, "batches", "ingested.jsonl", "checked.jsonl", "check", "attrib", "private", "final", "reports")
+    _clear(run, "batches", "ingested.jsonl", "checked.jsonl", "check", "attrib", "private", "final", "reports",
+           *DOC_LATER_FILES)
     planned = documents.plan_doc_batches(args.docs, args.per_batch, args.seed)
     (run / "written").mkdir(parents=True, exist_ok=True)
     live = {b["batch_id"] for b in planned}
@@ -361,7 +362,7 @@ def cmd_synth_doc_ingest(args) -> int:
               f"{padding.HEURISTIC_FACTOR} instead.")
         return 2
     _clear(run, "ingested.jsonl", "checked.jsonl", "final", "check", "attrib", "private",
-           "reports/check.json", "reports/pilot.json")
+           "reports/check.json", "reports/pilot.json", *DOC_LATER_FILES)
     stats, dropped = Counter(), []
     rows = documents.ingest_docs(run, count=count, stats=stats, dropped=dropped, method=method)
     write_jsonl(run / "ingested.jsonl", rows)
@@ -400,7 +401,7 @@ def cmd_synth_check_prepare(args) -> int:
         print(f"missing {run / 'ingested.jsonl'}; run synth ingest first")
         return 2
     _clear(run, "check", "checked.jsonl", "attrib", "private", "final",
-           "reports/check.json", "reports/attrib.json", "reports/pilot.json")
+           "reports/check.json", "reports/attrib.json", "reports/pilot.json", *DOC_LATER_FILES)
     doc_run = _is_doc_run(run)
     part_size = args.doc_part_size if doc_run else args.part_size
     parts, key = prepare_sheets(list(read_jsonl(run / "ingested.jsonl")), n_sheets=args.sheets,
@@ -432,6 +433,8 @@ def cmd_synth_check_score(args) -> int:
         print("error: no answers found")
         return 2
     if _is_doc_run(run):
+        if _doc_later_steps_block(run, "check-score", args.force):
+            return 2
         return _doc_check_score(run, key, answers, bad, n, m)
     kept, stats = score_answers(list(read_jsonl(run / "ingested.jsonl")), key, answers)
     stats["bad_answer_line"] = bad
@@ -464,6 +467,154 @@ def _doc_check_score(run: Path, key: dict, answers: list[dict], bad: int, n: int
     _write_json(run / "reports" / "pilot.json", pilot)
     print(json.dumps(dict(stats)))
     print(json.dumps(pilot, indent=2))
+    return 0
+
+
+# --- Task 7b: no-document control and difficulty signal (document runs only) ------------------------
+
+DOC_STEPS = ("check-score", "nodoc-prepare", "nodoc-score", "diff-prepare", "diff-score")
+DOC_STEP_ORDER = " -> ".join(DOC_STEPS)
+# step -> (the file whose presence means the step has run, the files the step owns)
+DOC_STEP_FILES = {
+    "check-score": ("checked.jsonl", ()),
+    "nodoc-prepare": ("private/nodoc-key.json", ("nodoc", "private/nodoc-key.json")),
+    "nodoc-score": ("nodoc-checked.jsonl", ("nodoc-checked.jsonl", "reports/nodoc.json")),
+    "diff-prepare": ("private/diff-key.json", ("diff", "private/diff-key.json")),
+    "diff-score": ("reports/difficulty.json", ("reports/difficulty.json",)),
+}
+DOC_LATER_FILES = tuple(f for step in DOC_STEPS[1:] for f in DOC_STEP_FILES[step][1])
+PILOT_SECTION = {"nodoc-score": "nodoc", "diff-score": "difficulty"}
+
+
+def _doc_step_done(run: Path, step: str) -> bool:
+    return (run / DOC_STEP_FILES[step][0]).exists()
+
+
+def _doc_later_steps_block(run: Path, step: str, force: bool) -> bool:
+    """True (after printing why) when a later step has already run; with force, discard the later steps."""
+    later = [s for s in DOC_STEPS[DOC_STEPS.index(step) + 1:] if _doc_step_done(run, s)]
+    if not later:
+        return False
+    if not force:
+        print(f"error: {', '.join(later)} already ran in {run}; re-running {step} would leave them stale "
+              f"(order: {DOC_STEP_ORDER}). Pass --force to discard {', '.join(later)} and run {step} again.")
+        return True
+    _clear(run, *(f for s in DOC_STEPS[DOC_STEPS.index(step) + 1:] for f in DOC_STEP_FILES[s][1]))
+    pilot_path = run / "reports" / "pilot.json"
+    if pilot_path.exists():
+        pilot = json.loads(pilot_path.read_text())
+        for s in DOC_STEPS[DOC_STEPS.index(step) + 1:]:
+            pilot.pop(PILOT_SECTION.get(s, ""), None)
+        _write_json(pilot_path, pilot)
+    print(f"--force: discarded {', '.join(later)}")
+    return False
+
+
+def _doc_step_guard(run: Path, step: str, force: bool) -> bool:
+    """True (after printing why) when step must not run now: not a document run, the previous step has not run,
+    or a later step already ran (unless force)."""
+    if not (run / "batches").is_dir() or not _is_doc_run(run):
+        print(f"error: {run} is not a document run; synth {step} only works on runs planned with synth doc-plan")
+        return True
+    prev = DOC_STEPS[DOC_STEPS.index(step) - 1]
+    if not _doc_step_done(run, prev):
+        print(f"error: run synth {prev} before synth {step} (order: {DOC_STEP_ORDER}); "
+              f"missing {run / DOC_STEP_FILES[prev][0]}")
+        return True
+    return _doc_later_steps_block(run, step, force)
+
+
+def _write_doc_final(run: Path, rows, drop: tuple[str, ...] = (), section: str | None = None,
+                     report: dict | None = None) -> None:
+    """Rewrite final/synthetic_docs.jsonl in place and keep reports/pilot.json's sections in step with it."""
+    write_jsonl(run / "final" / "synthetic_docs.jsonl", rows)
+    pilot_path = run / "reports" / "pilot.json"
+    pilot = json.loads(pilot_path.read_text()) if pilot_path.exists() else {}
+    for name in drop:
+        pilot.pop(name, None)
+    if section:
+        pilot[section] = report
+    _write_json(pilot_path, pilot)
+
+
+def _doc_prepare(args, step: str, sub: str, source: str, prepare, render) -> int:
+    run = Path(args.dir)
+    if _doc_step_guard(run, step, args.force):
+        return 2
+    answered = sorted((run / sub).glob("answers-*.jsonl"))
+    if answered and not args.force:
+        print(f"error: {run / sub} already holds {len(answered)} answer file(s); re-running {step} would discard "
+              f"them. Pass --force to start {sub}/ again.")
+        return 2
+    rows = list(read_jsonl(run / source))
+    _clear(run, *DOC_STEP_FILES[step][1])
+    # the final file goes back to this step's input, so final/ always matches the last scoring step
+    _write_doc_final(run, rows, drop=("nodoc", "difficulty") if step == "nodoc-prepare" else ("difficulty",))
+    parts, key = prepare(rows, part_size=args.part_size, seed=args.seed)
+    for name, items in parts:
+        sheet = (run / sub / f"{name}.jsonl").resolve()
+        _dump_items(sheet, items)
+        widest = max(len(it["options"]) for it in items)
+        sheet.with_suffix(".prompt.md").write_text(
+            render(str(sheet), str(sheet.with_name(f"answers-{name}.jsonl")), LETTERS[max(widest, 6) - 1]))
+    _write_json(run / DOC_STEP_FILES[step][0], key)
+    print(f"{len(parts)} {sub} parts, {sum(len(i) for _, i in parts)} items, {len(rows)} questions")
+    return 0
+
+
+def _doc_answers(run: Path, sub: str, key_rel: str) -> tuple[dict, list[dict]] | None:
+    key = json.loads((run / key_rel).read_text())
+    answers, bad = _read_answer_lines(sorted((run / sub).glob("answers-*.jsonl")))
+    n, m = _coverage(key, answers, "item_id")
+    print(f"answered {n} of {m}")
+    if bad:
+        print(f"WARNING: {bad} unreadable answer line(s)")
+    if n == 0:
+        print(f"error: no answers found in {run / sub}")
+        return None
+    if n < m:
+        print(f"WARNING: only {n} of {m} {sub} items answered")
+    return key, answers
+
+
+def cmd_synth_nodoc_prepare(args) -> int:
+    return _doc_prepare(args, "nodoc-prepare", "nodoc", "checked.jsonl", documents.prepare_nodoc,
+                        documents.render_nodoc_prompt)
+
+
+def cmd_synth_nodoc_score(args) -> int:
+    run = Path(args.dir)
+    if _doc_step_guard(run, "nodoc-score", args.force):
+        return 2
+    got = _doc_answers(run, "nodoc", "private/nodoc-key.json")
+    if got is None:
+        return 2
+    kept, report = documents.score_nodoc(list(read_jsonl(run / "checked.jsonl")),
+                                         list(read_jsonl(run / "ingested.jsonl")), *got)
+    write_jsonl(run / "nodoc-checked.jsonl", kept)
+    _write_json(run / "reports" / "nodoc.json", report)
+    _write_doc_final(run, kept, drop=("difficulty",), section="nodoc", report=report)
+    print(json.dumps(report, indent=2))
+    return 0
+
+
+def cmd_synth_diff_prepare(args) -> int:
+    def render(sheet, answers, max_letter):
+        return render_checker_prompt(sheet, answers, max_letter=max_letter, documents=True)
+    return _doc_prepare(args, "diff-prepare", "diff", "nodoc-checked.jsonl", documents.prepare_diff, render)
+
+
+def cmd_synth_diff_score(args) -> int:
+    run = Path(args.dir)
+    if _doc_step_guard(run, "diff-score", args.force):
+        return 2
+    got = _doc_answers(run, "diff", "private/diff-key.json")
+    if got is None:
+        return 2
+    rows, report = documents.score_difficulty(list(read_jsonl(run / "nodoc-checked.jsonl")), *got)
+    _write_json(run / "reports" / "difficulty.json", report)
+    _write_doc_final(run, rows, section="difficulty", report=report)
+    print(json.dumps(report, indent=2))
     return 0
 
 
@@ -905,7 +1056,9 @@ def make_parser() -> argparse.ArgumentParser:
     for name, func in [("plan", cmd_synth_plan), ("ingest", cmd_synth_ingest),
                        ("check-prepare", cmd_synth_check_prepare), ("check-score", cmd_synth_check_score),
                        ("attrib-prepare", cmd_synth_attrib_prepare), ("attrib-score", cmd_synth_attrib_score),
-                       ("doc-plan", cmd_synth_doc_plan), ("doc-ingest", cmd_synth_doc_ingest)]:
+                       ("doc-plan", cmd_synth_doc_plan), ("doc-ingest", cmd_synth_doc_ingest),
+                       ("nodoc-prepare", cmd_synth_nodoc_prepare), ("nodoc-score", cmd_synth_nodoc_score),
+                       ("diff-prepare", cmd_synth_diff_prepare), ("diff-score", cmd_synth_diff_score)]:
         p = ssub.add_parser(name)
         p.add_argument("--dir", required=True)
         if name == "doc-ingest":
@@ -914,9 +1067,16 @@ def make_parser() -> argparse.ArgumentParser:
                                 f"{padding.HEURISTIC_FACTOR} instead of refusing")
         if name == "doc-plan":
             p.add_argument("--docs", type=int, required=True)
-            p.add_argument("--per-batch", type=int, default=2)
-        if name in ("plan", "doc-plan", "check-prepare", "attrib-prepare"):
+            p.add_argument("--per-batch", type=int, default=documents.PER_BATCH)
+        if name in ("plan", "doc-plan", "check-prepare", "attrib-prepare", "nodoc-prepare", "diff-prepare"):
             p.add_argument("--seed", type=int, default=0)
+        if name in ("check-score", "nodoc-prepare", "nodoc-score", "diff-prepare", "diff-score"):
+            p.add_argument("--force", action="store_true",
+                           help="document runs: discard the later steps (and this step's answers) and run again")
+        if name == "nodoc-prepare":
+            p.add_argument("--part-size", type=int, default=documents.NODOC_PART_SIZE)
+        if name == "diff-prepare":
+            p.add_argument("--part-size", type=int, default=documents.DIFF_PART_SIZE)
         p.set_defaults(func=func)
         if name == "plan":
             p.add_argument("--clusters", type=int, required=True)

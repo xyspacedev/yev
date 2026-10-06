@@ -81,8 +81,8 @@ def prepare_sheets(
 
 
 DOCUMENT_NOTE = """
-Each item's `state` is a long document (a support thread, incident report, agent log, conversation transcript or
-shift handover). Read the whole document before answering its question. The items in this file come from different
+Each item's `state` is a long document (a support thread, incident report, agent log, conversation transcript,
+shift handover, invoice email thread, contract with amendments or security alert log). Read the whole document before answering its question. The items in this file come from different
 documents and are independent of each other.
 """
 
@@ -103,12 +103,8 @@ Then reply with only the number of answers written.
 """
 
 
-def score_answers(decisions: list[Decision], key: dict, answers: list[dict],
-                  cluster_filter=keep_valid_clusters) -> tuple[list[Decision], Counter]:
-    """Majority vote per decision; soft gold = the vote shares when the votes are split.
-
-    cluster_filter runs on the survivors (default: clusters must keep two golds); None skips it."""
-    stats: Counter = Counter()
+def collect_votes(key: dict, answers: list[dict], stats: Counter) -> dict[str, list[str]]:
+    """The option keys chosen for each decision, one per answered item; problems are counted in stats."""
     votes: dict[str, list[str]] = defaultdict(list)
     seen: set[str] = set()
     for a in answers:
@@ -130,6 +126,17 @@ def score_answers(decisions: list[Decision], key: dict, answers: list[dict],
             continue
         seen.add(item_id)
         votes[entry["decision"]].append(chosen)
+
+    return votes
+
+
+def score_answers(decisions: list[Decision], key: dict, answers: list[dict],
+                  cluster_filter=keep_valid_clusters) -> tuple[list[Decision], Counter]:
+    """Majority vote per decision; soft gold = the vote shares when the votes are split.
+
+    cluster_filter runs on the survivors (default: clusters must keep two golds); None skips it."""
+    stats: Counter = Counter()
+    votes = collect_votes(key, answers, stats)
 
     survivors: list[Decision] = []
     for d in decisions:

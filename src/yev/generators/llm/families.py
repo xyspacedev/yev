@@ -45,6 +45,7 @@ DOC_TOPICS: dict[str, tuple[str, str]] = {
     "resolution_status": ("choice", "The true current state of the issue or task at the end of the document, as opposed to what someone claimed."),
     "commitment_check": ("choice", "What was actually promised or agreed, by whom, and by when, after later messages corrected earlier ones."),
     "numeric_reasoning": ("choice", "A quantity that must be worked out from figures spread across the document (amount owed, hours of downtime, units left); options are candidate values."),
+    "effective_terms": ("choice", "Which version of a price, date, limit or clause is in force at a given point, once later amendments, updates and stated exceptions are applied."),
     "customer_sentiment": ("score", "The tone of the customer or user at the end of the document, on a numbered scale defined in the options."),
     "severity": ("score", "How severe the incident or problem is, on a numbered scale whose levels are defined in the options."),
     "risk": ("score", "How risky a proposed action is, on a numbered scale whose levels are defined in the options."),
@@ -81,5 +82,27 @@ DOC_KINDS: dict[str, tuple[str, tuple[str, ...]]] = {
         "plus the procedure the incoming shift must follow.",
         ("next_action", "commitment_check", "escalation", "risk", "numeric_reasoning", "policy_compliance",
          "resolution_status"),
+    ),
+    # Added in Task 7b. Written from general business practice, not from any benchmark.
+    "invoice_email_thread": (
+        "An email thread between a supplier's accounts-receivable team and a customer's accounts-payable staff "
+        "about several invoices: line items, purchase-order numbers, credit notes, partial payments, late fees, "
+        "payment terms, and the dispute and remittance rules each side quotes.",
+        ("numeric_reasoning", "commitment_check", "claim_support", "policy_compliance", "next_action",
+         "resolution_status", "escalation", "customer_sentiment"),
+    ),
+    "contract_amendment": (
+        "A services or supply contract excerpt followed by numbered amendments and side letters that change "
+        "prices, dates, service levels, notice periods and termination terms; a later amendment overrides an "
+        "earlier clause only where it says so.",
+        ("effective_terms", "numeric_reasoning", "claim_support", "commitment_check", "policy_compliance",
+         "next_action", "risk"),
+    ),
+    "security_alert_log": (
+        "A security operations log: alerts with timestamps, hosts, users and source addresses, analyst triage "
+        "notes, enrichment lookups, an allow-list or suppression list, and the triage and escalation playbook "
+        "the analysts follow.",
+        ("severity", "root_cause", "error_detection", "escalation", "next_action", "policy_compliance",
+         "claim_support", "numeric_reasoning"),
     ),
 }
