@@ -221,7 +221,8 @@ version of a policy. The wrong options of the questions should match these distr
   answer that a reader who skipped a step, used a distractor or misapplied a rule would pick. No filler options:
   no jokes, no duplicates, nothing that is wrong on its face.
 - A choice question has 3 to 10 options. Where it is natural, include a "none of these" or
-  "insufficient information" option, and make it the gold when the document really does not settle it.
+  "insufficient information" option. Make it the gold only when the document explicitly leaves the point open
+  (for example, an awaited reply or a figure marked as unknown), never because you left a fact out.
 - A score question uses numbered levels: option keys "0", "1", ... "n-1" (3 to 10 levels), ordered from lowest to
   highest, each with a one-sentence description of that level.
 - Every score question (severity, risk, priority, sentiment or similar) must use a
@@ -241,8 +242,8 @@ version of a policy. The wrong options of the questions should match these distr
 - No question may be answerable without reading the document: a reader who sees only the question and options
   must not be able to guess the gold. Every question is also put to a model with the document hidden, and
   questions it answers correctly that way are thrown away.
-- Make readers work: put the deciding facts in different parts of the document, let later messages correct
-  earlier ones, include plausible but irrelevant detail.
+- Make readers work: put the deciding facts in different parts of the document, let messages correct earlier
+  ones under the document's stated rule, include plausible but irrelevant detail.
 - Each document's questions are answered independently; no question may give away another's answer.
 - {injection_rule}
 - Everything is fictional: invent company names, people, products and numbers. Do not reuse examples you

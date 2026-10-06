@@ -43,7 +43,7 @@ DOC_TOPICS: dict[str, tuple[str, str]] = {
     "tool_choice": ("choice", "Which tool, command or step an agent should use next, given its instructions and the outputs so far."),
     "error_detection": ("choice", "Which step, message or entry in the document is the first one that is wrong (a bad calculation, a broken rule, a misread output)."),
     "resolution_status": ("choice", "The true current state of the issue or task at the end of the document, as opposed to what someone claimed."),
-    "commitment_check": ("choice", "What was actually promised or agreed, by whom, and by when, after later messages corrected earlier ones."),
+    "commitment_check": ("choice", "What was actually promised or agreed, by whom, and by when, after any corrections the document's stated rule allows."),
     "numeric_reasoning": ("choice", "A quantity that must be worked out from figures spread across the document (amount owed, hours of downtime, units left); options are candidate values."),
     "effective_terms": ("choice", "Which version of a price, date, limit or clause is in force at a given point, once later amendments, updates and stated exceptions are applied."),
     "customer_sentiment": ("score", "The tone of the customer or user at the end of the document, on a numbered scale defined in the options."),
