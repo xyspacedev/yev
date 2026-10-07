@@ -13,5 +13,6 @@
   "max_len_plain": 12288,
   "max_len_examples": 12288,
   "token_budget": 12288,
-  "sort_window": 200
+  "sort_window": 200,
+  "split_oversized_units": true
 }

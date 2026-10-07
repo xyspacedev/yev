@@ -69,3 +69,15 @@ def test_long_row_does_not_inflate_short_batch():
     enc = _fake_enc({"long": [4096], **{f"s{k}": [100] for k in range(25)}})
     for b in build_batches(enc, token_budget=4096, seed=0):
         assert len(b) * max(len(enc[i]["input_ids"]) for i in b) <= 4096
+
+
+def test_oversized_unit_is_split_into_budget_sized_batches():
+    # a long document with 12 questions of 9,000 tokens each, under a 12,288-token budget
+    enc = _fake_enc({"doc": [9000] * 12, **{f"s{k}": [100] for k in range(30)}})
+    batches = build_batches(enc, token_budget=12288, seed=0, split_oversized=True)
+    assert sorted(i for b in batches for i in b) == list(range(len(enc)))
+    for b in batches:
+        assert len(b) * max(len(enc[i]["input_ids"]) for i in b) <= 12288
+    assert any(len(b) == 12 for b in build_batches(enc, token_budget=12288, seed=0))  # default keeps the unit whole
+    doc_rows = {i for i, e in enumerate(enc) if e["unit"] == "doc"}
+    assert all(set(b) <= doc_rows or not (set(b) & doc_rows) for b in batches)  # never mixed with other units

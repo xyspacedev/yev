@@ -100,7 +100,7 @@ def test_stage1_config_matches_lc100_except_limits():
     lc, s1 = _load_json("configs/stage0/lc100.json"), _load_json("configs/stage1/main.json")
     changed = {k for k in lc.keys() | s1.keys() if lc.get(k) != s1.get(k)}
     assert changed == {"name", "train_path", "out_dir", "n_max", "max_len_plain", "max_len_examples", "token_budget",
-                       "sort_window", "epochs"}
+                       "sort_window", "epochs", "split_oversized_units"}
     assert s1["n_max"] == 10 and s1["max_len_plain"] == s1["max_len_examples"] == s1["token_budget"] == 12288
     assert s1["epochs"] == 1 and s1["sort_window"] > TrainConfig.sort_window
     assert s1["out_dir"] == "/home/ubuntu/runs/stage1"

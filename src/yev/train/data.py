@@ -119,11 +119,12 @@ def encode_all(rows, tokenizer, max_len_plain, max_len_examples, eps_hard, eps_o
 
 
 def build_batches(encoded: list[dict], token_budget: int, seed: int, window: int = 50,
-                  n_max: int = N_MAX) -> list[list[int]]:
+                  n_max: int = N_MAX, split_oversized: bool = False) -> list[list[int]]:
     """Pack whole units into batches whose padded size (rows x longest row) stays within token_budget.
 
     Units are shuffled with `seed`, then sorted by length inside windows of `window` units so rows of
-    similar length share a batch. A unit that alone exceeds the budget becomes its own batch.
+    similar length share a batch. A unit that alone exceeds the budget becomes its own batch, or, with
+    split_oversized, budget-sized batches of its own rows (for losses that don't need the unit together).
     Deterministic for a given seed. Rows encoded for a different n_max are an error.
     """
     wide = [e.get("id", "?") for e in encoded if "target" in e and len(e["target"]) != n_max]
@@ -139,6 +140,15 @@ def build_batches(encoded: list[dict], token_budget: int, seed: int, window: int
     batches, cur, cur_max = [], [], 0
     for u in order:
         idx = groups[u]
+        if split_oversized and len(idx) > 1 and len(idx) * longest[u] > token_budget:
+            # A unit too big for one batch (e.g. a long document with many questions) is split into
+            # budget-sized batches of its own; keeping a unit together only matters for the pair loss.
+            if cur:
+                batches.append(cur)
+                cur, cur_max = [], 0
+            per = max(1, token_budget // longest[u])
+            batches.extend(idx[k:k + per] for k in range(0, len(idx), per))
+            continue
         new_max = max(cur_max, longest[u])
         if cur and (len(cur) + len(idx)) * new_max > token_budget:
             batches.append(cur)
