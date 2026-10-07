@@ -780,3 +780,15 @@ def test_cluster_runs_refuse_doc_steps(tmp_path):
     assert cli.main(["synth", "plan", "--dir", str(run), "--clusters", "2", "--per-batch", "1", "--seed", "0"]) == 0
     for step in ("nodoc-prepare", "nodoc-score", "diff-prepare", "diff-score"):
         assert cli.main(["synth", step, "--dir", str(run)]) == 2
+
+
+def test_one_sheet_check_needs_one_vote():
+    from yev.generators.llm.check import score_answers
+    from yev.schema import Decision, Option
+    d = Decision(id="q1", type="choice", state="s", question="q?", options=[Option("a", "A"), Option("b", "B")],
+                 gold="a", family="long_workflow", source="synthetic_opus", licence="cc-by-4.0", cluster_id="doc:x")
+    key = {"i1": {"decision": "q1", "sheet": 0, "letters": {"A": "a", "B": "b"}}}
+    kept, stats = score_answers([d], key, [{"item_id": "i1", "letter": "A"}], cluster_filter=None)
+    assert [k.id for k in kept] == ["q1"] and stats["missing_votes"] == 0
+    kept, _ = score_answers([d], key, [{"item_id": "i1", "letter": "B"}], cluster_filter=None)
+    assert kept == []

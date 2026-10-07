@@ -131,17 +131,19 @@ def collect_votes(key: dict, answers: list[dict], stats: Counter) -> dict[str, l
 
 
 def score_answers(decisions: list[Decision], key: dict, answers: list[dict],
-                  cluster_filter=keep_valid_clusters) -> tuple[list[Decision], Counter]:
+                  cluster_filter=keep_valid_clusters, min_votes: int | None = None) -> tuple[list[Decision], Counter]:
     """Majority vote per decision; soft gold = the vote shares when the votes are split.
 
     cluster_filter runs on the survivors (default: clusters must keep two golds); None skips it."""
     stats: Counter = Counter()
     votes = collect_votes(key, answers, stats)
+    if min_votes is None:  # a one-sheet run needs one vote; the default three-sheet run needs two
+        min_votes = min(2, len({entry["sheet"] for entry in key.values()}) or 2)
 
     survivors: list[Decision] = []
     for d in decisions:
         v = votes.get(d.id, [])
-        if len(v) < 2:
+        if len(v) < min_votes:
             stats["missing_votes"] += 1
             continue
         agree = v.count(d.gold)
