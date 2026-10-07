@@ -621,7 +621,9 @@ def score_nodoc(rows: list[Decision], ingested: list[Decision], key: dict,
     scores = [d for d in marked if d.type == "score"]
     score_all = sum(all_correct(d) for d in scores)
     survivors = [d for d in marked if d.id not in dropped_ids]
-    kept = keep_docs(survivors, ingested)
+    # The document rule is not re-applied here: a guessable question says nothing about its document,
+    # and check-score has already dropped documents whose questions failed the blind check.
+    kept = survivors
 
     def dropped(d):  # None leaves score questions out of the drop breakdowns
         return None if d.type == "score" else d.id in dropped_ids

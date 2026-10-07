@@ -594,21 +594,13 @@ def test_nodoc_never_drops_score_questions():
     assert report["by_question_type"]["choice"]["dropped"] == 1 and "score" not in report["by_question_type"]
 
 
-def test_nodoc_reapplies_document_rule():
+def test_nodoc_drops_questions_but_keeps_their_documents():
     rows = _rows(n_docs=2, n_q=10)
     parts, key = prepare_nodoc(rows, part_size=40, seed=0)
-    # doc 0 loses 3 of 10 (70%: kept); doc 1 loses 4 (60%: whole document dropped)
     lose = {f"doc:0:q{j}" for j in range(3)} | {f"doc:1:q{j}" for j in range(4)}
     kept, report = score_nodoc(rows, rows, key, _pick_answers(parts, key, lambda d, s: "k1" if d in lose else "k2"))
-    assert {d.cluster_id for d in kept} == {"doc:0"} and len(kept) == 7
-    assert report["docs_dropped_below_70pct"] == 1 and report["final_docs"] == 1 and report["final_questions"] == 7
-    # the 70% rule counts against the questions the writer wrote, not those that reached this step
-    written = _rows(n_docs=1, n_q=10, written=14)
-    parts, key = prepare_nodoc(written, part_size=40, seed=0)
-    kept, _ = score_nodoc(written, written, key,
-                          _pick_answers(parts, key, lambda d, s: "k1" if d == "doc:0:q0" else "k2"))
-    assert kept == []  # 9 of 14 written = 64%
-
+    assert {d.cluster_id for d in kept} == {"doc:0", "doc:1"} and len(kept) == 13
+    assert report["docs_dropped_below_70pct"] == 0 and report["final_docs"] == 2 and report["final_questions"] == 13
 
 def test_nodoc_missing_answers_never_drop():
     rows = _rows(n_docs=1, n_q=4)
