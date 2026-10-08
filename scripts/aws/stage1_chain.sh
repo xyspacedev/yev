@@ -6,7 +6,9 @@
 # Resumable: a step whose output already exists is skipped; a failure prints a `!!!` line and stops the chain.
 # --force and --skip-overlong are never passed: an over-long row makes eval/calibrate refuse, and that stops the chain.
 # It never runs DecideBench test, WorkflowEvals or the Decision Index (separate, explicit steps).
-# Overrides (tests and non-default setups): STAGE1_RUNS (default ~/runs), STAGE1_BASE, STAGE1_MAX_LEN, STAGE1_MIN_TPS.
+# Overrides (tests and non-default setups): STAGE1_RUNS (default ~/runs), STAGE1_BASE, STAGE1_MAX_LEN, STAGE1_MIN_TPS,
+# STAGE1_CONFIG (default configs/stage1/main.json), STAGE1_NAME (run dir under STAGE1_RUNS, default stage1),
+# STAGE1_SKIP_SMOKE=1 (skip the smoke run, e.g. for a second run on a box whose throughput is already known).
 set -uo pipefail
 
 export PATH="$HOME/venv/bin:$PATH"
@@ -14,7 +16,8 @@ RUNS="${STAGE1_RUNS:-$HOME/runs}"
 BASE="${STAGE1_BASE:-$HOME/models/Qwen3.5-4B-Base}"
 MAX_LEN="${STAGE1_MAX_LEN:-12288}"   # = max_len_plain/token_budget of configs/stage1/main.json; the eval default (4096) would refuse rows
 MIN_TPS="${STAGE1_MIN_TPS:-500}"
-OUT="$RUNS/stage1"
+CONFIG="${STAGE1_CONFIG:-configs/stage1/main.json}"
+OUT="$RUNS/${STAGE1_NAME:-stage1}"
 SMOKE="$RUNS/stage1-smoke"
 MIX=data/mix
 mkdir -p "$OUT" "$SMOKE"
@@ -34,6 +37,7 @@ step() {
 }
 
 # --- smoke ---
+if [ "${STAGE1_SKIP_SMOKE:-0}" = 1 ]; then echo "=== smoke skipped (STAGE1_SKIP_SMOKE=1)"; else
 step smoke "$SMOKE/train_summary.json" yev train --config configs/stage1/smoke.json
 tps=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["tokens_per_s"])' "$SMOKE/train_summary.json" 2>/dev/null) \
   || { echo "!!! smoke: no tokens_per_s in $SMOKE/train_summary.json; chain stopped"; exit 1; }
@@ -41,9 +45,10 @@ if ! python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[
   echo "!!! smoke: $tps tokens/s is under $MIN_TPS; chain stopped"; exit 1
 fi
 echo "=== smoke throughput $tps tokens/s"
+fi
 
 # --- full training (summary is written only when a run ends; the trainer's finished-run guard also protects it) ---
-step train "$OUT/train_summary.json" yev train --config configs/stage1/main.json
+step train "$OUT/train_summary.json" yev train --config "$CONFIG"
 
 COMMON=(--model "$OUT/final" --base "$BASE" --max-len "$MAX_LEN")
 step calibrate "$OUT/calibration.json" yev calibrate "${COMMON[@]}" \

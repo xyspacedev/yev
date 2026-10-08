@@ -326,9 +326,9 @@ def _chain_env(tmp_path, tps="900", fail_on=None):
 echo "$*" >> "$HOME/calls"
 [ -n "{fail_on or ''}" ] && [[ "$*" == *"{fail_on or 'NEVER'}"* ]] && exit 1
 if [ "$1" = train ]; then
-  d=smoke; [[ "$*" == *main.json* ]] && d=main
+  d=main; [[ "$*" == *smoke.json* ]] && d=smoke
   if [ $d = smoke ]; then o="$HOME/runs/stage1-smoke"; echo '{{"tokens_per_s": {tps}, "steps": 200, "total_steps": 200}}' > "$o/train_summary.json"
-  else o="$HOME/runs/stage1"; echo '{{"steps": 5, "total_steps": 5}}' > "$o/train_summary.json"; fi
+  else o="$HOME/runs/${{STAGE1_NAME:-stage1}}"; echo '{{"steps": 5, "total_steps": 5}}' > "$o/train_summary.json"; fi
 else
   while [ $# -gt 0 ]; do [ "$1" = --out ] && echo '{{}}' > "$2"; shift; done
 fi
@@ -397,3 +397,24 @@ def test_stage1_chain_never_runs_test_stage_steps():
     t = Path("scripts/aws/stage1_chain.sh").read_text()
     code = "\n".join(l for l in t.splitlines() if not l.lstrip().startswith("#"))
     assert not re.search(r"decidebench|workflowevals|decision_index|--force|--skip-overlong", code, re.I)
+
+
+def test_stage1_chain_second_run_with_other_config(tmp_path):
+    home, env = _chain_env(tmp_path)
+    env.update(STAGE1_CONFIG="configs/stage1/r128.json", STAGE1_NAME="stage1-r128", STAGE1_SKIP_SMOKE="1")
+    r = _run_chain(env)
+    assert r.returncode == 0, r.stderr
+    calls = (home / "calls").read_text().splitlines()
+    assert calls[0].startswith("train") and "configs/stage1/r128.json" in calls[0]
+    assert not any("smoke.json" in c for c in calls)
+    assert all("runs/stage1-r128/" in c for c in calls[1:])
+    log = (home / "runs/stage1-r128/chain.log").read_text()
+    assert "smoke skipped" in log and log.rstrip().endswith("STAGE1_DONE")
+    assert not (home / "runs/stage1/chain.log").exists()
+
+
+def test_r128_config_differs_from_main_only_in_rank_and_paths():
+    import json
+    m, r = (json.loads(open(f"configs/stage1/{n}.json").read()) for n in ("main", "r128"))
+    assert {k for k in m.keys() | r.keys() if m.get(k) != r.get(k)} == {"name", "out_dir", "train_path", "lora_r", "lora_alpha"}
+    assert r["lora_r"] == 128 and r["lora_alpha"] == 256
