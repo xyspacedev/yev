@@ -418,3 +418,13 @@ def test_r128_config_differs_from_main_only_in_rank_and_paths():
     m, r = (json.loads(open(f"configs/stage1/{n}.json").read()) for n in ("main", "r128"))
     assert {k for k in m.keys() | r.keys() if m.get(k) != r.get(k)} == {"name", "out_dir", "train_path", "lora_r", "lora_alpha"}
     assert r["lora_r"] == 128 and r["lora_alpha"] == 256
+
+
+def test_stage1_chain_uses_the_named_mix_for_calibration_and_dev(tmp_path):
+    home, env = _chain_env(tmp_path)
+    env.update(STAGE1_CONFIG="configs/stage1/stage1b.json", STAGE1_NAME="stage1b", STAGE1_SKIP_SMOKE="1", STAGE1_MIX="stage1b")
+    r = _run_chain(env)
+    assert r.returncode == 0, r.stderr
+    calls = (home / "calls").read_text().splitlines()
+    assert "data/mix/stage1b/calibration.chat.jsonl" in calls[1]
+    assert "data/mix/stage1b/dev.chat.jsonl" in calls[3] and "data/mix/stage0/dev.chat.jsonl" in calls[2]

@@ -8,7 +8,8 @@
 # It never runs DecideBench test, WorkflowEvals or the Decision Index (separate, explicit steps).
 # Overrides (tests and non-default setups): STAGE1_RUNS (default ~/runs), STAGE1_BASE, STAGE1_MAX_LEN, STAGE1_MIN_TPS,
 # STAGE1_CONFIG (default configs/stage1/main.json), STAGE1_NAME (run dir under STAGE1_RUNS, default stage1),
-# STAGE1_SKIP_SMOKE=1 (skip the smoke run, e.g. for a second run on a box whose throughput is already known).
+# STAGE1_SKIP_SMOKE=1 (skip the smoke run, e.g. for a second run on a box whose throughput is already known),
+# STAGE1_MIX (mix under data/mix whose calibration/dev splits the run uses, default stage1).
 set -uo pipefail
 
 export PATH="$HOME/venv/bin:$PATH"
@@ -20,6 +21,7 @@ CONFIG="${STAGE1_CONFIG:-configs/stage1/main.json}"
 OUT="$RUNS/${STAGE1_NAME:-stage1}"
 SMOKE="$RUNS/stage1-smoke"
 MIX=data/mix
+S1="${STAGE1_MIX:-stage1}"
 mkdir -p "$OUT" "$SMOKE"
 exec >> "$OUT/chain.log" 2>&1
 
@@ -52,12 +54,12 @@ step train "$OUT/train_summary.json" yev train --config "$CONFIG"
 
 COMMON=(--model "$OUT/final" --base "$BASE" --max-len "$MAX_LEN")
 step calibrate "$OUT/calibration.json" yev calibrate "${COMMON[@]}" \
-  --data "$MIX/stage1/calibration.chat.jsonl" --out "$OUT/calibration.json"
+  --data "$MIX/$S1/calibration.chat.jsonl" --out "$OUT/calibration.json"
 step eval_stage0_dev "$OUT/dev_report_stage0.json" yev eval "${COMMON[@]}" --calibration "$OUT/calibration.json" \
   --data "$MIX/stage0/dev.chat.jsonl" --out "$OUT/dev_report_stage0.json"
 step eval_stage1_dev "$OUT/dev_report.json" yev eval "${COMMON[@]}" --calibration "$OUT/calibration.json" \
-  --data "$MIX/stage1/dev.chat.jsonl" --out "$OUT/dev_report.json"
+  --data "$MIX/$S1/dev.chat.jsonl" --out "$OUT/dev_report.json"
 step position_bias "$OUT/position_bias.json" yev eval "${COMMON[@]}" --calibration "$OUT/calibration.json" \
-  --data "$MIX/stage1/dev.chat.jsonl" --shuffle-options 3 --min-options 7 --out "$OUT/position_bias.json"
+  --data "$MIX/$S1/dev.chat.jsonl" --shuffle-options 3 --min-options 7 --out "$OUT/position_bias.json"
 
 echo STAGE1_DONE
