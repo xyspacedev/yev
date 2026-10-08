@@ -34,6 +34,7 @@ class TrainConfig:
     weight_decay: float = 0.0
     token_budget: int = 12288
     sort_window: int = 50  # units per length-sorted window in build_batches (length bucketing)
+    allow_slow_kernels: bool = False  # train without fla/causal_conv1d on a GPU (much slower)
     split_oversized_units: bool = False  # split units larger than token_budget (only safe without pair/perm loss)
     grad_accum: int = 3
     max_len_plain: int = 2048
@@ -62,8 +63,25 @@ class TrainConfig:
         return cls(**json.loads(Path(path).read_text()))
 
 
+FAST_KERNELS = ("fla", "causal_conv1d")  # Qwen3.5 Gated DeltaNet kernels; without them transformers falls back to slow reference code
+
+
+def missing_fast_kernels() -> list[str]:
+    import importlib.util
+    return [m for m in FAST_KERNELS if importlib.util.find_spec(m) is None]
+
+
+def require_fast_kernels(cfg) -> None:
+    """Refuse to train on a GPU without the fast kernels unless the config allows the slow fallback."""
+    missing = missing_fast_kernels()
+    if missing and torch.cuda.is_available() and not cfg.allow_slow_kernels:
+        raise RuntimeError(f"fast kernels missing: {', '.join(missing)}. Install them (scripts/aws/setup.sh) or set "
+                           f"allow_slow_kernels: true in the config to train on the slow reference implementation.")
+
+
 def _load(cfg):
     from transformers import AutoModelForCausalLM, AutoTokenizer
+    require_fast_kernels(cfg)
     tok = AutoTokenizer.from_pretrained(cfg.model_path)
     model = AutoModelForCausalLM.from_pretrained(cfg.model_path, dtype=torch.bfloat16 if cfg.bf16 else torch.float32)
     return tok, model

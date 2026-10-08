@@ -95,3 +95,19 @@ def test_perm_loss_with_mixed_option_counts(tmp_path, tok, tiny_model, make_row)
     loss, _, parts = _batch_loss(c, tiny_model, items, torch.tensor(letter_token_ids(tok)), 0, "cpu")
     assert torch.isfinite(loss) and "perm" in parts and parts["perm"] >= 0
     loss.backward()
+
+
+def test_gpu_training_refuses_missing_fast_kernels(monkeypatch):
+    import pytest
+    from yev.train import trainer
+    cfg = trainer.TrainConfig.__new__(trainer.TrainConfig)
+    monkeypatch.setattr(trainer, "missing_fast_kernels", lambda: ["causal_conv1d"])
+    monkeypatch.setattr(trainer.torch.cuda, "is_available", lambda: True)
+    cfg.allow_slow_kernels = False
+    with pytest.raises(RuntimeError, match="causal_conv1d"):
+        trainer.require_fast_kernels(cfg)
+    cfg.allow_slow_kernels = True
+    trainer.require_fast_kernels(cfg)  # allowed explicitly
+    monkeypatch.setattr(trainer.torch.cuda, "is_available", lambda: False)
+    cfg.allow_slow_kernels = False
+    trainer.require_fast_kernels(cfg)  # CPU runs (tests) are never blocked
