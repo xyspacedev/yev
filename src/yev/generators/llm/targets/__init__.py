@@ -11,8 +11,10 @@ from yev.generators.llm.targets.agent import (
     AGENT_BENIGN_MULTISTEP, AGENT_INJECTION_PAIR, AGENT_OVERREACH, TRACE_AUDIT,
 )
 from yev.generators.llm.targets.conversation import DISCLOSURE_GATE, GROUNDED_OFFER, PERSONA_STYLE_RULE
+from yev.generators.llm.targets.judging import JUDGE_PLANTED_ERROR, PLANTED_NOTE, POLICY_AMENDMENT
 
 PLANNED_FAMILIES: dict[str, PlannedFamily] = {
     f.name: f for f in (AGENT_INJECTION_PAIR, AGENT_OVERREACH, AGENT_BENIGN_MULTISTEP, TRACE_AUDIT,
-                         DISCLOSURE_GATE, GROUNDED_OFFER, PERSONA_STYLE_RULE)
+                         DISCLOSURE_GATE, GROUNDED_OFFER, PERSONA_STYLE_RULE, JUDGE_PLANTED_ERROR, PLANTED_NOTE,
+                         POLICY_AMENDMENT)
 }

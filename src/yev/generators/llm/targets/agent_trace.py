@@ -25,7 +25,8 @@ def per_batch(states_per_group: int, tokens: tuple[int, int]) -> int:
 
 def an(noun: str, start: bool = False) -> str:
     """The noun with "a" or "an" in front ("A"/"An" when it starts a sentence)."""
-    art = "an" if noun[:1].lower() in "aeiou" else "a"
+    low = noun.lower()
+    art = "an" if low[:1] in "aeiou" and not low.startswith(("uni", "use", "one", "eu")) else "a"
     return f"{art.capitalize() if start else art} {noun}"
 
 
