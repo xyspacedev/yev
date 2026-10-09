@@ -149,9 +149,17 @@ def cmd_pad(args: argparse.Namespace) -> int:
 
 
 def cmd_filter(args: argparse.Namespace) -> int:
-    src, out = Path(args.inp), Path(args.out)
-    if src.resolve() == out.resolve():
+    src = Path(args.inp)
+    out_file = Path(args.out_file) if args.out_file else None
+    out = out_file.parent if out_file else Path(args.out)
+    if out_file is None and src.resolve() == out.resolve():
         print("--in and --out must be different directories")
+        return 2
+    if out_file is not None and out_file.resolve().parent == src.resolve():
+        print("--out-file must not sit in the --in directory")
+        return 2
+    if out_file is not None and out_file.exists() and not args.force:
+        print(f"{out_file} exists; pass --force to overwrite it")
         return 2
     files = sorted(src.glob("*.jsonl"))
     if not files:
@@ -173,6 +181,25 @@ def cmd_filter(args: argparse.Namespace) -> int:
     by_source: dict[str, list] = defaultdict(list)
     for d in kept:
         by_source[d.source].append(d)
+    meta = {
+        "embedding": None if args.no_embed else EMBED_MODEL,
+        "threshold": EMBED_THRESHOLD,
+        "decidebench_revision": decidebench.REVISION,
+        "benchmarks": None if bench_fp is None else {"path": args.benchmarks, "names": bench_fp.names(),
+                                                     "built": bench_fp.meta.get("built")},
+        "git_sha": _git_sha(),
+    }
+    if out_file is not None:
+        # One pool file: all kept rows go to exactly this path; nothing else in its directory is touched
+        # except its own report beside it (<name>.filter_report.json).
+        if by_source.get(skill_atlas.NAME):
+            print(f"--out-file cannot carry {skill_atlas.NAME} rows (they need their attribution file); use --out")
+            return 2
+        write_jsonl(out_file, kept)
+        report = {"meta": {**meta, "out_file": str(out_file)}, "sources": report}
+        _write_stats_atomically(out_file.with_name(out_file.stem + ".filter_report.json"), report)
+        print(json.dumps(report, indent=2))
+        return 0
     out.mkdir(parents=True, exist_ok=True)
     for stale in [*out.glob("*.jsonl"), *out.glob("*.jsonl.tmp"), out / skill_atlas.ATTRIBUTION_FILE]:
         if stale.exists():
@@ -182,17 +209,7 @@ def cmd_filter(args: argparse.Namespace) -> int:
     attribution = skill_atlas.attribution_rows({"kept": by_source.get(skill_atlas.NAME, [])})
     if attribution:
         skill_atlas.write_attribution(out, attribution)
-    report = {
-        "meta": {
-            "embedding": None if args.no_embed else EMBED_MODEL,
-            "threshold": EMBED_THRESHOLD,
-            "decidebench_revision": decidebench.REVISION,
-            "benchmarks": None if bench_fp is None else {"path": args.benchmarks, "names": bench_fp.names(),
-                                                         "built": bench_fp.meta.get("built")},
-            "git_sha": _git_sha(),
-        },
-        "sources": report,
-    }
+    report = {"meta": meta, "sources": report}
     _write_stats_atomically(out / "filter_report.json", report)
     print(json.dumps(report, indent=2))
     return 0
@@ -1111,7 +1128,12 @@ def make_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("filter", help="apply licence, contamination and dedupe filters")
     p.add_argument("--in", dest="inp", required=True)
-    p.add_argument("--out", required=True)
+    dest = p.add_mutually_exclusive_group(required=True)
+    dest.add_argument("--out", help="directory: cleared of *.jsonl, then one <source>.jsonl per source")
+    dest.add_argument("--out-file", help="write every kept row to exactly this file (e.g. "
+                                         "data/stage1c-pool/<family>.jsonl); nothing else is deleted, and its "
+                                         "report goes to <name>.filter_report.json beside it")
+    p.add_argument("--force", action="store_true", help="with --out-file: overwrite the file if it exists")
     p.add_argument("--no-embed", action="store_true", help="skip the embedding filter (tests only)")
     p.add_argument("--benchmarks", help="fingerprints JSON from yev bench fingerprint; drops a row (reason "
                                         "benchmark:<name>) that shares 3 distinct 8-grams with one benchmark item "

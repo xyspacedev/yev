@@ -363,3 +363,36 @@ def test_one_and_two_token_lines_do_not_match_short_items():
     assert overlaps_any(dec(1, "Hello team,\nThe report is attached.\nRegards,\nAnna"), fp) is None
     assert overlaps_any(dec(2, 'Comment: yes please'), fp) is None
     assert overlaps_any(dec(3, "thanks"), fp) == "intents"  # the whole state still matches at any length
+
+
+def test_filter_benchmarks_file_covers_every_reported_benchmark():
+    """`yev filter --benchmarks` checks every benchmark in the file (run_filters/assert_clean use
+    overlaps_any over bench_fp.names()), and the built file holds all four reported ones besides DecideBench."""
+    import pytest
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "data/bench/fingerprints.json"
+    if not path.is_file():
+        pytest.skip("data/bench/fingerprints.json not built")
+    names = BenchmarkFingerprints.load(path).names()
+    for want in ("decidebench", "rjudge", "dynabench_test", "jevbench"):
+        assert want in names, want
+    assert any(n.startswith("workflowevals_") for n in names)
+
+
+def test_filter_out_file_drops_rows_of_any_benchmark(tmp_path, monkeypatch):
+    raw = tmp_path / "raw"
+    rows = [Decision(id=f"toy:{i}", type="noul", state=s, question="q?",
+                     options=[Option("yes", "y"), Option("no", "n")], gold="yes", family="f", source="toy",
+                     licence="mit")
+            for i, s in enumerate(["clean state", f"Prefix. {B1}.", f"Prefix. {B2}.", f"Prefix. {B3}."])]
+    write_jsonl(raw / "toy.jsonl", rows)
+    fp_path = tmp_path / "fingerprints.json"
+    BFP.save(fp_path)
+    monkeypatch.setattr(cli, "load_fingerprints", lambda: EMPTY_FP)
+    monkeypatch.setattr(cli, "SOURCES", [SourceSpec(name="toy", hf_id="toy/toy", config=None, split="train",
+                                                   licence="mit", convert=lambda *a: [], pool_size=10)])
+    out = tmp_path / "pool" / "fam.jsonl"
+    assert cli.main(["filter", "--in", str(raw), "--out-file", str(out), "--no-embed",
+                     "--benchmarks", str(fp_path)]) == 0
+    assert [d.id for d in read_jsonl(out)] == ["toy:0"]
