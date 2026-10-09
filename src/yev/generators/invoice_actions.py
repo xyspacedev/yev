@@ -331,6 +331,16 @@ def _ctx(rng: random.Random) -> dict:
     }
 
 
+def owner_comment(p: APPolicy, c: InvoiceCase) -> str:
+    """The owner's comment, derived from every printed flag about approval, delivery or billing, so that it never
+    asserts an approval or a completed delivery that a check contradicts."""
+    if c.owner_declined:
+        return "{owner} withholds approval and asks that the invoice not be paid."
+    if (not c.po_approved or c.extra_lines or c.missing_lines or not c.totals_match or variance_flag(p, c)):
+        return "{owner} has not commented on the invoice yet."
+    return "{owner} approves the invoice as billed."
+
+
 def render_state(variant: str, c: InvoiceCase, rng: random.Random) -> str:
     p = VARIANTS[variant]
     x = _ctx(rng)
@@ -361,12 +371,7 @@ def render_state(variant: str, c: InvoiceCase, rng: random.Random) -> str:
         (f"- sender: impostor ({x['contact']} <billing@{x['fake_domain']}>; the email domain does not match the "
          f"vendor's {x['domain']})" if c.impostor else
          f"- sender: known_contact ({x['contact']} <{x['email']}>, listed on the vendor record)"),
-        (f"- Project owner's comment: {x['owner']} withholds approval and asks that the invoice not be paid."
-         if c.owner_declined else
-         # Approving "as billed" would contradict unapproved extra lines or an unapproved PO.
-         f"- Project owner's comment: {x['owner']} has not commented on the invoice yet." if not c.po_approved else
-         f"- Project owner's comment: {x['owner']} confirms the work listed on the PO was done." if c.extra_lines
-         else f"- Project owner's comment: {x['owner']} approves the invoice as billed."),
+        f"- Project owner's comment: {owner_comment(p, c).format(owner=x['owner'])}",
         {"none": "- Earlier invoices: nothing else from this vendor for the same work.",
          "possible": f"- Earlier invoices: {x['prior_inv']} from the same vendor is for the same amount under a "
                      f"different invoice number; whether it is the same work is still open.",

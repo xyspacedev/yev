@@ -296,14 +296,25 @@ def test_invoice_action_printed_routing_rules_match_table():
 
 
 def test_invoice_action_owner_comment_never_contradicts_flags():
-    ds = generate_invoice_action(1000, seed=9)
-    flagged = 0
+    """The owner comment asserts approval only when no printed flag about approval, delivery or billing is raised,
+    and it never asserts that work was done."""
+    ds = generate_invoice_action(700, seed=9)
+    assert len(ds) >= 2000
+    comments = Counter()
     for d in ds:
         f = facts(d)
-        if f["unapproved_extra_lines"] != "none" or f["po_approved"] == "no":
-            flagged += 1
-            assert "approves the invoice as billed" not in d.state, d.id
-    assert flagged > 200
+        comment = re.search(r"^- Project owner's comment: \S+ \S+ (.+)$", d.state, re.M).group(1)
+        comments[comment.split()[0]] += 1
+        contra = (f["unapproved_extra_lines"] != "none" or f["missing_records_lines"] != "none"
+                  or f["po_approved"] == "no" or f["totals_match"] == "no" or f["po_variance_flag"] == "yes")
+        if f["owner_declined"] == "yes":
+            assert comment.startswith("withholds approval"), d.id
+        elif contra:
+            assert comment == "has not commented on the invoice yet.", (d.id, comment)
+        else:
+            assert comment == "approves the invoice as billed.", (d.id, comment)
+        assert not re.search(r"\b(done|delivered|completed|received)\b", comment), comment
+    assert set(comments) == {"withholds", "has", "approves"}
 
 
 def test_invoice_action_bank_change_endings_differ():
