@@ -27,7 +27,8 @@ from yev.generators import padding
 from yev.generators import actions, drills, invoices, many_options, returns, returns_v2, scales, severity
 from yev.generators.common import EDIT_TYPES
 from yev.generators.llm.attrib import prepare_pairs, render_attrib_prompt, score_attribution
-from yev.generators.llm import documents
+from yev.generators.llm import documents, planned
+from yev.generators.llm.targets import PLANNED_FAMILIES
 from yev.generators.llm.check import LETTERS, parse_letter, prepare_sheets, render_checker_prompt, score_answers
 from yev.generators.llm.ingest import ingest_file
 from yev.generators.llm.plan import plan_batches, render_writer_prompt
@@ -317,7 +318,16 @@ def cmd_synth_plan(args) -> int:
 
 
 def _is_doc_run(run: Path) -> bool:
-    return any(documents.is_doc_spec(json.loads(p.read_text())) for p in (run / "batches").glob("*.json"))
+    """A document run or a planned run: both use the document steps (check, nodoc, diff) unchanged."""
+    return any(documents.is_doc_spec(s) or planned.is_planned_spec(s) for s in _batch_specs(run))
+
+
+def _is_planned_run(run: Path) -> bool:
+    return any(planned.is_planned_spec(s) for s in _batch_specs(run))
+
+
+def _batch_specs(run: Path) -> list[dict]:
+    return [json.loads(p.read_text()) for p in sorted((run / "batches").glob("*.json"))]
 
 
 def _refuse_doc_run(run: Path, what: str) -> bool:
@@ -350,8 +360,9 @@ def cmd_synth_doc_plan(args) -> int:
 
 def cmd_synth_doc_ingest(args) -> int:
     run = Path(args.dir)
-    if not _is_doc_run(run):
-        print(f"error: {run} has no document batches; run synth doc-plan first")
+    if not any(documents.is_doc_spec(s) for s in _batch_specs(run)):
+        hint = "it is a planned run; use synth planned-ingest" if _is_planned_run(run) else "run synth doc-plan first"
+        print(f"error: {run} has no document batches; {hint}")
         return 2
     try:
         count, method = documents.load_doc_counter(allow_heuristic=args.allow_heuristic)
@@ -369,6 +380,54 @@ def cmd_synth_doc_ingest(args) -> int:
     _write_json(run / "reports" / "ingest.json", {**dict(stats), "token_count": method})
     _write_json(run / "reports" / "ingest-dropped.json", dropped)
     print(json.dumps({**dict(stats), "token_count": method}))
+    return 0
+
+
+def cmd_synth_planned_plan(args) -> int:
+    family = PLANNED_FAMILIES.get(args.family)
+    if family is None:
+        print(f"error: unknown planned family {args.family!r}; known: {', '.join(sorted(PLANNED_FAMILIES)) or 'none'}")
+        return 2
+    run = Path(args.dir)
+    _clear(run, "batches", "ingested.jsonl", "checked.jsonl", "check", "attrib", "private", "final", "reports",
+           *DOC_LATER_FILES)
+    batches = planned.plan_batches(family, args.groups, args.seed)
+    (run / "written").mkdir(parents=True, exist_ok=True)
+    live = {b["batch_id"] for b in batches}
+    for stale in (run / "written").glob("*.jsonl"):
+        if stale.stem not in live:
+            stale.unlink()
+    for b in batches:
+        spec_path = run / "batches" / f"{b['batch_id']}.json"
+        spec_path.parent.mkdir(parents=True, exist_ok=True)
+        spec_path.write_text(json.dumps(b, indent=2))
+        out = (run / b["output"]).resolve()
+        spec_path.with_suffix(".prompt.md").write_text(planned.writer_prompt(b, str(out)))
+    n_states = sum(len(g["states"]) for b in batches for g in b["groups"])
+    print(f"planned {args.groups} {family.name} groups ({n_states} states) in {len(batches)} batches")
+    return 0
+
+
+def cmd_synth_planned_ingest(args) -> int:
+    run = Path(args.dir)
+    if not _is_planned_run(run):
+        print(f"error: {run} has no planned batches; run synth planned-plan first")
+        return 2
+    try:
+        count, method = documents.load_doc_counter(allow_heuristic=args.allow_heuristic)
+    except padding.TokenizerUnavailable as e:
+        print(f"error: {e}")
+        print("planned-ingest measures states with the real Qwen3.5 tokenizer; pass --allow-heuristic to estimate "
+              f"with len/4 x {padding.HEURISTIC_FACTOR} instead.")
+        return 2
+    _clear(run, "ingested.jsonl", "checked.jsonl", "final", "check", "attrib", "private",
+           "reports/check.json", "reports/pilot.json", *DOC_LATER_FILES)
+    rows, report = planned.ingest_planned(run, count=count, method=method)
+    dropped = report.pop("dropped", [])
+    write_jsonl(run / "ingested.jsonl", rows)
+    _write_json(run / "reports" / "ingest.json", report)
+    _write_json(run / "reports" / "ingest-dropped.json", dropped)
+    print(json.dumps(report))
     return 0
 
 
@@ -452,7 +511,9 @@ def _doc_check_score(run: Path, key: dict, answers: list[dict], bad: int, n: int
     """Documents skip attribution (Plan Ruling 2): check-score writes the final rows and the pilot report."""
     ingested = list(read_jsonl(run / "ingested.jsonl"))
     survivors: list = []
-    kept, stats = documents.score_doc_answers(ingested, key, answers, survivors_out=survivors)
+    is_planned = _is_planned_run(run)
+    score = planned.score_planned_answers if is_planned else documents.score_doc_answers
+    kept, stats = score(ingested, key, answers, survivors_out=survivors)
     stats["bad_answer_line"] = bad
     stats["answered"], stats["expected"] = n, m
     if n < m:
@@ -462,8 +523,12 @@ def _doc_check_score(run: Path, key: dict, answers: list[dict], bad: int, n: int
     _write_json(run / "reports" / "check.json", dict(stats))
     specs = [json.loads(p.read_text()) for p in sorted((run / "batches").glob("*.json"))]
     ingest = json.loads((run / "reports" / "ingest.json").read_text()) if (run / "reports" / "ingest.json").exists() else {}
-    pilot = documents.doc_pilot_report([b for b in specs if documents.is_doc_spec(b)], ingest, ingested,
-                                       survivors, kept)
+    if is_planned:
+        pilot = planned.planned_pilot_report([b for b in specs if planned.is_planned_spec(b)], ingest, ingested,
+                                             survivors, kept)
+    else:
+        pilot = documents.doc_pilot_report([b for b in specs if documents.is_doc_spec(b)], ingest, ingested,
+                                           survivors, kept)
     _write_json(run / "reports" / "pilot.json", pilot)
     print(json.dumps(dict(stats)))
     print(json.dumps(pilot, indent=2))
@@ -514,7 +579,8 @@ def _doc_step_guard(run: Path, step: str, force: bool) -> bool:
     """True (after printing why) when step must not run now: not a document run, the previous step has not run,
     or a later step already ran (unless force)."""
     if not (run / "batches").is_dir() or not _is_doc_run(run):
-        print(f"error: {run} is not a document run; synth {step} only works on runs planned with synth doc-plan")
+        print(f"error: {run} is not a document run; synth {step} only works on runs planned with synth doc-plan "
+              "or synth planned-plan")
         return True
     prev = DOC_STEPS[DOC_STEPS.index(step) - 1]
     if not _doc_step_done(run, prev):
@@ -1060,17 +1126,22 @@ def make_parser() -> argparse.ArgumentParser:
                        ("attrib-prepare", cmd_synth_attrib_prepare), ("attrib-score", cmd_synth_attrib_score),
                        ("doc-plan", cmd_synth_doc_plan), ("doc-ingest", cmd_synth_doc_ingest),
                        ("nodoc-prepare", cmd_synth_nodoc_prepare), ("nodoc-score", cmd_synth_nodoc_score),
-                       ("diff-prepare", cmd_synth_diff_prepare), ("diff-score", cmd_synth_diff_score)]:
+                       ("diff-prepare", cmd_synth_diff_prepare), ("diff-score", cmd_synth_diff_score),
+                       ("planned-plan", cmd_synth_planned_plan), ("planned-ingest", cmd_synth_planned_ingest)]:
         p = ssub.add_parser(name)
         p.add_argument("--dir", required=True)
-        if name == "doc-ingest":
+        if name == "planned-plan":
+            p.add_argument("--family", required=True, help="a name in targets.PLANNED_FAMILIES")
+            p.add_argument("--groups", type=int, required=True)
+        if name in ("doc-ingest", "planned-ingest"):
             p.add_argument("--allow-heuristic", action="store_true",
                            help=f"if the real tokenizer is unavailable, estimate tokens as len/4 x "
                                 f"{padding.HEURISTIC_FACTOR} instead of refusing")
         if name == "doc-plan":
             p.add_argument("--docs", type=int, required=True)
             p.add_argument("--per-batch", type=int, default=documents.PER_BATCH)
-        if name in ("plan", "doc-plan", "check-prepare", "attrib-prepare", "nodoc-prepare", "diff-prepare"):
+        if name in ("plan", "doc-plan", "planned-plan", "check-prepare", "attrib-prepare", "nodoc-prepare",
+                    "diff-prepare"):
             p.add_argument("--seed", type=int, default=0)
         if name in ("check-score", "nodoc-prepare", "nodoc-score", "diff-prepare", "diff-score"):
             p.add_argument("--force", action="store_true",

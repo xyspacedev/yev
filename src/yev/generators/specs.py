@@ -13,4 +13,5 @@ def _not_downloaded(row, i, rng, labels):
 SYNTHETIC_SPECS = [
     SourceSpec("synthetic_rules", "yev/synthetic", "rules", "train", SYNTH_LICENCE, _not_downloaded, 0),
     SourceSpec("synthetic_opus", "yev/synthetic", "opus", "train", SYNTH_LICENCE, _not_downloaded, 0),
+    SourceSpec("synthetic_planned", "yev/synthetic", "planned", "train", SYNTH_LICENCE, _not_downloaded, 0),
 ]
