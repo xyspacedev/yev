@@ -141,6 +141,7 @@ def plan_batches(family: PlannedFamily, n_groups: int, seed: int) -> list[dict]:
             "batch_id": batch_id,
             "family": family.name,
             "mode": MODE,
+            "seed": seed,
             "description": family.description,
             "state_format": family.state_format,
             "tokens": list(family.tokens),
@@ -227,7 +228,8 @@ When the file is written, reply with only the path and the number of lines writt
 def _rows_for(batch: dict, group: dict, state_spec: dict, state: str, run_name: str,
               est: int | None) -> list[Decision]:
     family = batch["family"]
-    cid = f"plan:{run_name}:{family}:{group['gid']}"
+    # gids restart at 0 per seed, so the seed keeps two runs with the same directory name apart
+    cid = f"plan:{run_name}:{family}:s{batch['seed']}:{group['gid']}"
     total = sum(len(s["questions"]) for s in group["states"])
     out = []
     for q in state_spec["questions"]:

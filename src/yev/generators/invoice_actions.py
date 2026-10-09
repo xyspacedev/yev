@@ -328,15 +328,21 @@ def _ctx(rng: random.Random) -> dict:
         "owner": person(rng), "approver": person(rng), "date": _date(rng), "paid_date": _date(rng),
         "acct_old": (old := rng.randint(1000, 9999)), "acct_new": rng.choice([n for n in range(1000, 10000) if n != old]),
         "diff_cents": rng.randint(100, 50_000) * rng.choice((1, -1)), "disc": rng.choice(("2/10 net 30", "1/15 net 45")),
+        "owner_silent": rng.random() < OWNER_SILENT_P,
     }
 
 
-def owner_comment(p: APPolicy, c: InvoiceCase) -> str:
+OWNER_SILENT_P = 0.25  # share of unflagged rows whose owner has not commented either
+
+
+def owner_comment(p: APPolicy, c: InvoiceCase, silent: bool = False) -> str:
     """The owner's comment, derived from every printed flag about approval, delivery or billing, so that it never
-    asserts an approval or a completed delivery that a check contradicts."""
+    asserts an approval or a completed delivery that a check contradicts. With `silent` an unflagged row gets the
+    neutral line too, so the neutral line carries no information about whether a flag is raised."""
     if c.owner_declined:
         return "{owner} withholds approval and asks that the invoice not be paid."
-    if (not c.po_approved or c.extra_lines or c.missing_lines or not c.totals_match or variance_flag(p, c)):
+    if (silent or not c.po_approved or c.extra_lines or c.missing_lines or not c.totals_match
+            or variance_flag(p, c)):
         return "{owner} has not commented on the invoice yet."
     return "{owner} approves the invoice as billed."
 
@@ -371,7 +377,7 @@ def render_state(variant: str, c: InvoiceCase, rng: random.Random) -> str:
         (f"- sender: impostor ({x['contact']} <billing@{x['fake_domain']}>; the email domain does not match the "
          f"vendor's {x['domain']})" if c.impostor else
          f"- sender: known_contact ({x['contact']} <{x['email']}>, listed on the vendor record)"),
-        f"- Project owner's comment: {owner_comment(p, c).format(owner=x['owner'])}",
+        f"- Project owner's comment: {owner_comment(p, c, x['owner_silent']).format(owner=x['owner'])}",
         {"none": "- Earlier invoices: nothing else from this vendor for the same work.",
          "possible": f"- Earlier invoices: {x['prior_inv']} from the same vendor is for the same amount under a "
                      f"different invoice number; whether it is the same work is still open.",

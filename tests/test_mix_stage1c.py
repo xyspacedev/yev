@@ -66,3 +66,21 @@ def test_stage1c_config_matches_stage1b_except_paths():
     for k in ("name", "train_path", "out_dir"):
         b.pop(k), c.pop(k)
     assert b == c
+
+
+def test_stage1c_pool_files_are_unique_and_named_after_families():
+    from yev.cli import RULE_GENERATORS
+    from yev.generators.llm.targets import PLANNED_FAMILIES
+
+    seen: dict[str, str] = {}
+    for b in C["blocks"]:
+        for f in b["files"]:
+            assert f not in seen, (f, seen.get(f), b["name"])
+            seen[f] = b["name"]
+    rule_families = {d.family for gen in RULE_GENERATORS.values() for d in gen(2, 0)}
+    allowed = set(PLANNED_FAMILIES) | rule_families | {"agent_overreach_rules", "public_long", "long_workflow_more"}
+    pool = [f for f in seen if f.startswith("data/stage1c-pool/")]
+    assert pool
+    for f in pool:
+        stem = Path(f).name.removesuffix(".jsonl")
+        assert Path(f).name.endswith(".jsonl") and stem in allowed, f

@@ -48,7 +48,7 @@ KEEP_HELPING: tuple[str, ...] = (
     "I'm sorry this is taking a while. Let's keep going: could you share {detail}?",
     "Understood. Before anything else, could you tell me {detail}, so I can check the order?",
 )
-DETAILS = ("the email address on the order", "the postcode it was delivered to", "the date you placed it",
+DETAILS = ("the email you checked out with", "the postcode it was delivered to", "the date you placed it",
            "a photo of the item", "the last four digits of the card you paid with")
 HANDOFF_LINES: tuple[str, ...] = (
     "Of course. I'm handing this chat over to a member of our support team now; they will join in a moment.",

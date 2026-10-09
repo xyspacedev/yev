@@ -99,3 +99,22 @@ def test_pick_performance_20k_pool():
     for r in rows[:2000]:
         assert pool.pick(r, rng) is not None
     assert time.perf_counter() - t < 2.0
+
+
+def test_repeat_copy_is_never_an_example_for_its_own_unit():
+    """A replay copy (mix._copy: cluster_id r{k}:<unit key>) belongs to its original's unit, so a row never
+    gets its own contrastive sibling as a worked example through the sibling's copy."""
+    from yev.format import _unit
+    from yev.mix import _copy, unit_key
+
+    sibling = d(1, "b", cluster="X", state="Sibling state.")
+    copies = [_copy(sibling, k) for k in (1, 2)]
+    pool = ExamplePool(copies + [d(2, "a", cluster="k2"), d(3, "c", cluster="k3")])
+    item = d(9, "a", cluster="X", state="Own state.")
+    for s in range(30):
+        assert pool.pick(item, random.Random(s)) is None  # the only "b" example sits in the item's own unit
+    # the same unit for originals and copies, with or without a cluster_id, as in mix.unit_key
+    loose = d(5, "a", state="No cluster here.")
+    for orig in (sibling, loose):
+        assert _unit(orig) == _unit(_copy(orig, 1)) == _unit(_copy(orig, 3)) == unit_key(orig)
+    assert _unit(_copy(sibling, 1)) != _unit(_copy(loose, 1))

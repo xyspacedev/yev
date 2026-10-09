@@ -132,8 +132,8 @@ def test_ingest_builds_rows_from_plan(tmp_path):
     for d in rows:
         gid, sid = d.metadata["gid"], d.metadata["sid"]
         q = plan[(gid, sid)]["questions"][0]
-        assert d.id == f"plan:{name}:{TOY.name}:{gid}:{sid}:{q['name']}"
-        assert d.cluster_id == f"plan:{name}:{TOY.name}:{gid}"
+        assert d.id == f"plan:{name}:{TOY.name}:s0:{gid}:{sid}:{q['name']}"
+        assert d.cluster_id == f"plan:{name}:{TOY.name}:s0:{gid}"
         assert d.source == "synthetic_planned" == planned.SOURCE and d.licence == SYNTH_LICENCE
         assert d.family == TOY.name and d.type == "noul"
         assert d.question == q["question"] and d.gold == q["gold"]
@@ -298,3 +298,57 @@ def test_planner_text_has_no_benchmark_overlap(name, tmp_path):
             if hit:
                 hits.append((d.id, hit))
     assert not hits, hits[:5]
+
+
+def _planned_run_ingested(tmp_path, monkeypatch, name="run", seed=1):
+    monkeypatch.setitem(PLANNED_FAMILIES, TOY.name, TOY)
+    run = tmp_path / name
+    assert cli.main(["synth", "planned-plan", "--family", TOY.name, "--groups", "4", "--seed", str(seed),
+                     "--dir", str(run)]) == 0
+    for p in sorted((run / "batches").glob("planned-batch-*.json")):
+        b = json.loads(planned.plan_path(run, json.loads(p.read_text())["batch_id"]).read_text())
+        (run / b["output"]).write_text("".join(
+            json.dumps({"gid": g["gid"], "sid": s["sid"], "state": words(60)}) + "\n"
+            for g in b["groups"] for s in g["states"]))
+    assert cli.main(["synth", "planned-ingest", "--dir", str(run), "--allow-heuristic"]) == 0
+    return run
+
+
+def test_planned_check_prepare_defaults_to_one_sheet(tmp_path, monkeypatch):
+    run = _planned_run_ingested(tmp_path, monkeypatch)
+    assert cli.main(["synth", "check-prepare", "--dir", str(run)]) == 0
+    key = json.loads((run / "private" / "check-key.json").read_text())
+    rows = {d.id: d for d in read_jsonl(run / "ingested.jsonl")}
+    assert {e["sheet"] for e in key.values()} == {0}
+    assert len(key) == len(rows)  # one item per question
+    # one matching vote is enough: answer every item with its gold once and every group survives
+    for sheet in sorted((run / "check").glob("sheet-*.jsonl")):
+        out = []
+        for line in sheet.read_text().splitlines():
+            it = json.loads(line)
+            k = key[it["item_id"]]
+            gold = rows[k["decision"]].gold
+            out.append(json.dumps({"item_id": it["item_id"],
+                                   "letter": next(l for l, x in k["letters"].items() if x == gold)}))
+        (run / "check" / f"answers-{sheet.stem}.jsonl").write_text("\n".join(out) + "\n")
+    assert cli.main(["synth", "check-score", "--dir", str(run)]) == 0
+    assert len(list(read_jsonl(run / "final" / "synthetic_docs.jsonl"))) == len(rows)
+    # an explicit --sheets still wins
+    assert cli.main(["synth", "check-prepare", "--dir", str(run), "--sheets", "3"]) == 0
+    key = json.loads((run / "private" / "check-key.json").read_text())
+    assert len(key) == 3 * len(rows) and len({e["sheet"] for e in key.values()}) == 3
+
+
+def test_planned_ids_carry_the_seed(tmp_path):
+    """Two runs whose directories share a basename but used different seeds never share an id or cluster."""
+    a, _ = make_run(tmp_path / "a", n_groups=4, seed=1)
+    b, _ = make_run(tmp_path / "b", n_groups=4, seed=2)
+    assert a.name == b.name
+    ra, _ = ingest_planned(a, count=count_words)
+    rb, _ = ingest_planned(b, count=count_words)
+    assert ra and rb
+    assert not {d.id for d in ra} & {d.id for d in rb}
+    assert not {d.cluster_id for d in ra} & {d.cluster_id for d in rb}
+    assert all(d.cluster_id.startswith(f"plan:run:{TOY.name}:s1:") for d in ra)
+    # keep_groups still works on the new cluster ids: all survive -> all kept
+    assert keep_groups(ra, ra) == ra

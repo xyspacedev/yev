@@ -311,10 +311,23 @@ def test_invoice_action_owner_comment_never_contradicts_flags():
             assert comment.startswith("withholds approval"), d.id
         elif contra:
             assert comment == "has not commented on the invoice yet.", (d.id, comment)
-        else:
-            assert comment == "approves the invoice as billed.", (d.id, comment)
+        else:  # no flag raised: approval, or the neutral line on ~25% of rows
+            assert comment in ("approves the invoice as billed.", "has not commented on the invoice yet."), (d.id, comment)
         assert not re.search(r"\b(done|delivered|completed|received)\b", comment), comment
     assert set(comments) == {"withholds", "has", "approves"}
+
+
+def test_invoice_action_neutral_owner_line_on_a_quarter_of_clean_rows():
+    """The neutral 'has not commented' line also shows on ~25% of clean-gold rows, so seeing it says nothing about
+    whether a flag is raised."""
+    clean = {"sender": "known_contact", "duplicate_flag": "no", "bank_change_flag": "no", "owner_declined": "no", "po_approved": "yes",
+             "unapproved_extra_lines": "none", "missing_records_lines": "none", "totals_match": "yes",
+             "po_variance_flag": "no", "approval_band": "auto_pay"}
+    ds = [d for d in generate_invoice_action(1500, seed=11) if all(facts(d)[k] == v for k, v in clean.items())]
+    assert all(d.gold in ("pay", "schedule_payment") for d in ds)
+    assert len(ds) > 500
+    neutral = sum("has not commented on the invoice yet." in d.state for d in ds)
+    assert 0.20 <= neutral / len(ds) <= 0.30, neutral / len(ds)
 
 
 def test_invoice_action_bank_change_endings_differ():

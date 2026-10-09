@@ -127,6 +127,8 @@ def _repeat_pass(taken: list[Decision], spec: dict, name: str, rng_key: str, fir
         return [], first_copy
     want = {f: set(v) for f, v in flt.items()}
     units = _units([d for d in taken if all(getattr(d, f) in v for f, v in want.items())])
+    if not units:
+        raise ValueError(f"block {name}: repeat_filter {flt} matches none of the block's {len(taken)} taken rows")
     keys = sorted(units)
     whole = int(r)
     out = [_copy(d, first_copy + k) for k in range(whole) for key in keys for d in units[key]]
@@ -274,6 +276,11 @@ def build_mix(recipe: dict, fingerprints: Fingerprints) -> MixResult:
     for pattern in recipe.get("dev_files", []):
         dev.extend(replace(d, split="dev") for d in load([pattern]))
 
+    ids = Counter(d.id for d in train + dev + block_cal)
+    dupes = [i for i, n in ids.items() if n > 1]
+    if dupes:
+        raise ValueError(f"{len(dupes)} duplicate ids across train/dev/calibration "
+                         f"(e.g. two runs with the same name and seed): {dupes[:5]}")
     overlap = {unit_key(d) for d in train} & {unit_key(d) for d in dev}
     if overlap:
         raise ValueError(f"{len(overlap)} units appear in both train and dev")

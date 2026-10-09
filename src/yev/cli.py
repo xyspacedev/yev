@@ -342,6 +342,9 @@ def _is_doc_run(run: Path) -> bool:
     return any(documents.is_doc_spec(s) or planned.is_planned_spec(s) for s in _batch_specs(run))
 
 
+PLANNED_SHEETS = 1  # plan 6: a planned question survives only if one blind Opus sheet returns the gold
+
+
 def _is_planned_run(run: Path) -> bool:
     return any(planned.is_planned_spec(s) for s in _batch_specs(run))
 
@@ -511,7 +514,9 @@ def cmd_synth_check_prepare(args) -> int:
            "reports/check.json", "reports/attrib.json", "reports/pilot.json", *DOC_LATER_FILES)
     doc_run = _is_doc_run(run)
     part_size = args.doc_part_size if doc_run else args.part_size
-    parts, key = prepare_sheets(list(read_jsonl(run / "ingested.jsonl")), n_sheets=args.sheets,
+    # planned runs: one blind sheet must return the planner's gold (score_answers then needs 1 vote)
+    sheets = args.sheets if args.sheets is not None else (PLANNED_SHEETS if _is_planned_run(run) else 3)
+    parts, key = prepare_sheets(list(read_jsonl(run / "ingested.jsonl")), n_sheets=sheets,
                                 part_size=part_size, seed=args.seed)
     for name, items in parts:
         sheet = (run / "check" / f"{name}.jsonl").resolve()
@@ -1207,7 +1212,8 @@ def make_parser() -> argparse.ArgumentParser:
             p.add_argument("--clusters", type=int, required=True)
             p.add_argument("--per-batch", type=int, default=25)
         if name == "check-prepare":
-            p.add_argument("--sheets", type=int, default=3)
+            p.add_argument("--sheets", type=int, default=None,
+                           help=f"checker sheets per item (default {PLANNED_SHEETS} for planned runs, else 3)")
         if name in ("check-prepare", "attrib-prepare"):
             p.add_argument("--part-size", type=int, default=250)
         if name == "check-prepare":

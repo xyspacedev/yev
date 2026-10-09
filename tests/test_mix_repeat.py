@@ -90,3 +90,31 @@ def test_planned_group_shares_split(tmp_path, empty_fingerprints):
         split.setdefault(d.cluster_id, set()).add(d.split)
     assert all(len(v) == 1 for v in split.values())
     assert res.dev  # holdout is per group, not one unit for the whole family
+
+
+def test_repeat_filter_matching_nothing_raises():
+    import pytest
+    taken = rows(10, "moderation")
+    with pytest.raises(ValueError, match=r"block b.*intent"):
+        repeat_rows(taken, {"name": "b", "repeat": 1, "repeat_filter": {"family": ["intent"]}}, seed=0)
+    with pytest.raises(ValueError, match=r"block b.*routing"):
+        repeat_rows(taken, {"name": "b", "repeat": 1,
+                            "repeat_extra": [{"repeat": 1, "repeat_filter": {"family": ["routing"]}}]}, seed=0)
+    # repeat 0 with a filter is a no-op, not an error
+    assert repeat_rows(taken, {"name": "b", "repeat": 0, "repeat_filter": {"family": ["intent"]}}, seed=0) == []
+
+
+def test_build_mix_rejects_duplicate_ids(tmp_path, empty_fingerprints):
+    import pytest
+    a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    write_jsonl(a, rows(20, source="synthetic_planned"))
+    dup = [Decision(id=d.id, type=d.type, state=d.state + " other run", question=d.question, options=d.options,
+                    gold=d.gold, family=d.family, source=d.source, licence=d.licence,
+                    cluster_id="other:" + d.cluster_id) for d in rows(20, source="synthetic_planned")]
+    write_jsonl(b, dup)
+    recipe = {"seed": 0, "blocks": [{"name": "a", "files": [str(a)], "rows": 20},
+                                    {"name": "b", "files": [str(b)], "rows": 20, "dev_share": 0.1}]}
+    with pytest.raises(ValueError, match=r"duplicate ids.*moderation:"):
+        build_mix(recipe, empty_fingerprints)
+    # repeats get unique #r{k} ids and do not trip the check
+    build_mix({"seed": 0, "blocks": [{"name": "a", "files": [str(a)], "rows": 20, "repeat": 2.5}]}, empty_fingerprints)

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
+import re
 from collections import defaultdict
+from functools import lru_cache
 
+from yev.filters.contamination import normalize_tokens
 from yev.schema import Decision, Option
 
 SYSTEM_PROMPT = (
@@ -38,8 +42,21 @@ def signature(d: Decision) -> tuple:
     return (d.type, d.family, tuple(sorted(d.keys)))
 
 
+REPEAT_PREFIX = re.compile(r"^r\d+:(?=(?:cluster|state):)")
+
+
+@lru_cache(maxsize=None)
+def _state_unit(state: str) -> str:
+    return "state:" + hashlib.sha1(" ".join(normalize_tokens(state)).encode()).hexdigest()
+
+
 def _unit(d: Decision) -> str:
-    return d.cluster_id or d.id
+    """The row's unit, as mix.unit_key; a replay copy (cluster_id r{k}:<unit key>, mix._copy) maps back to its
+    original's unit, so a row's own sibling never comes back as its example through a copy."""
+    if d.cluster_id:
+        stripped = REPEAT_PREFIX.sub("", d.cluster_id, count=1)
+        return stripped if stripped != d.cluster_id else f"cluster:{d.cluster_id}"
+    return _state_unit(d.state)
 
 
 class ExamplePool:
