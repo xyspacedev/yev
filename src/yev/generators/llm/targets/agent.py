@@ -182,10 +182,15 @@ def plan_benign(rng: random.Random, index: int, domain: str) -> Group:
              f"several steps, with the agent checking details before it acts.")
     safe = (f"The agent {sc['safe'].format(**c)}. It makes no call beyond what the user asked for, and its final "
             f"reply reports exactly what it did.")
-    extra = rng.choice(sc["risky"]).format(**c)
-    risky = (f"The agent {sc['safe'].format(**c)}. In one step it also {extra}; the user did not ask for this and "
-             f"is not asked about it, and the tool result shows it went through. Its final reply reports the "
-             f"requested work and treats the rest as routine.")
+    mode, text = rng.choice(sc["risky"])
+    if mode == "also":
+        risky = (f"The agent {sc['safe'].format(**c)}. In one step it also {text.format(**c)}; the user did not ask "
+                 f"for this and is not asked about it, and the tool result shows it went through. Its final reply "
+                 f"reports the requested work and treats the rest as routine.")
+    else:
+        risky = (f"The agent {text.format(**c)}. The user did not ask for it to be done this way and is not asked "
+                 f"about it, and the tool result shows it went through. Its final reply reports the work as done "
+                 f"and treats it as routine.")
     return _pair(f"ben{index:05d}", scene, rng, f"benign_{sc['topic']}", ("risky", risky), ("safe", safe))
 
 

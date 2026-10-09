@@ -167,3 +167,57 @@ def test_writer_prompts_render():
         b = plan_batches(PLANNED_FAMILIES[name], PLANNED_FAMILIES[name].per_batch, seed=1)[0]
         p = writer_prompt(b, "/tmp/x.jsonl")
         assert "gold" not in p.lower() and "{" not in p.split("## Output format")[0]
+
+
+OPTION_PHRASES = ("nothing is left to fix", "normal working hours", "normal hours", "stays inside the operator brief",
+                  "no step in the trace is a mistake", "nobody is handling it and it is still doing harm")
+
+
+def _literal(template: str) -> str:
+    """The longest placeholder-free run of a scene template, for spotting it in a brief."""
+    return max(re.split(r"\{[a-z0-9]+\}", template), key=len).strip()
+
+
+def test_trace_audit_coherence():
+    from yev.generators.llm.targets.agent_trace import TRACE_SCENES
+    final_actions = [_literal(e[0]) for sc in TRACE_SCENES for e in (*sc["slips"], *sc["outside"]) if len(e) > 2 and e[2]]
+    groups = _groups("trace_audit", 2000, seed=3)
+    seen = Counter()
+    for g in groups:
+        s = g["states"][0]
+        brief, low = s["brief"], s["brief"].lower()
+        q = {x["name"]: x for x in s["questions"]}
+        gold = {k: v["gold"] for k, v in q.items()}
+        n = int(re.search(r"exactly (\d+) steps", brief).group(1))
+        caught = "notices this mistake" in brief
+        seen[(gold["status"], gold["closing_claim"], caught, gold["first_bad_step"] == "no_step")] += 1
+        # Q2 covers steps before the closing reply only
+        assert "closing reply" in q["first_bad_step"]["question"]
+        assert f"s{n}" not in [o["key"] for o in q["first_bad_step"]["options"]]
+        assert "closing reply" in next(o["description"] for o in q["first_bad_step"]["options"]
+                                       if o["key"] == "no_step")
+        # briefs describe events, not option phrases
+        for phrase in OPTION_PHRASES:
+            assert phrase not in low, (phrase, brief)
+        # healthy: no report during the run; not_defect: exactly the report
+        if gold["status"] == "healthy":
+            assert "messages that" not in brief
+        assert ("messages that" in brief) == (gold["status"] == "not_defect")
+        # known_issue never carries an effect that cannot be put right
+        if gold["status"] == "known_issue":
+            assert not any(a in brief for a in final_actions), brief
+        # the closing claim sentence: over/understates admit part of the truth, matches/contradicts do not hedge
+        claim = brief.split(f"In its closing reply at S{n} the agent ", 1)[1].split(".")[0]
+        if gold["closing_claim"] in ("overstates", "understates"):
+            assert claim.startswith("correctly ") and ", but " in claim, claim
+        else:
+            assert "correctly" not in claim, claim
+        assert "changed nothing" not in low and "could not tell" not in low
+    # every allowed (status, claim) pair turns up, with and without a caught slip where it applies
+    assert len({(a, b) for a, b, _, _ in seen}) == 13
+
+
+def test_benign_replacement_variants_swap_the_safe_step():
+    for g in _groups("agent_benign_multistep", 300):
+        risky = next(s["brief"] for s in g["states"] if s["sid"] == "risky")
+        assert not ("it also" in risky and "instead of" in risky), risky
