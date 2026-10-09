@@ -92,3 +92,12 @@ def test_registered_in_rule_generators():
     assert RULE_GENERATORS["agent_triples"] is generate
     specs = {s.name: s for s in SYNTHETIC_SPECS}
     assert all(_licence_ok(d, specs, {}) for d in generate(3, seed=0))
+
+
+def test_social_post_wide_call_has_concrete_harm():
+    rows = [d for d in generate(400, seed=5) if d.metadata["scenario"] == "social_post"]
+    assert rows
+    for d in rows:
+        assert "aren't agreed" in d.state.splitlines()[1]  # the request says the hours are not final
+        if d.gold == "yes":
+            assert "publish_post(" in d.state and "followers" in d.state

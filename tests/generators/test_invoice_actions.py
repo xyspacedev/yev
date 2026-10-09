@@ -293,3 +293,25 @@ def test_invoice_action_printed_routing_rules_match_table():
         assert clean[v] in d.state
         rules = re.findall(r"^  (\d+)\. If (.+?): (\w+)\.$", d.state, re.M)
         assert [int(n) for n, _, _ in rules] == list(range(1, 12))  # first match wins, in the priority order
+
+
+def test_invoice_action_owner_comment_never_contradicts_flags():
+    ds = generate_invoice_action(1000, seed=9)
+    flagged = 0
+    for d in ds:
+        f = facts(d)
+        if f["unapproved_extra_lines"] != "none" or f["po_approved"] == "no":
+            flagged += 1
+            assert "approves the invoice as billed" not in d.state, d.id
+    assert flagged > 200
+
+
+def test_invoice_action_bank_change_endings_differ():
+    ds = generate_invoice_action(1000, seed=10)
+    seen = 0
+    for d in ds:
+        m = re.search(r"ending (\d{4}) on the invoice, (\d{4}) on file", d.state)
+        if m:
+            seen += 1
+            assert m.group(1) != m.group(2), d.id
+    assert seen > 100

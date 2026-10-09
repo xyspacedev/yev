@@ -141,3 +141,19 @@ def test_registered_in_rule_generators():
     assert RULE_GENERATORS["policy_counts"] is generate
     specs = {s.name: s for s in SYNTHETIC_SPECS}
     assert all(_licence_ok(d, specs, {}) for d in generate(3, seed=0))
+
+
+def test_percent_cap_push_backs_only_after_an_offer():
+    from yev.generators.policy_counts import FIRST_ASKS, PUSH_BACKS
+
+    for d in generate(400, seed=9):
+        if d.metadata["kind"] != "percent_cap":
+            continue
+        offered = False
+        for x in conversation(d):
+            text = x[len("User: "):] if x.startswith("User: ") else None
+            if text in PUSH_BACKS:
+                assert offered, d.state
+            if text in FIRST_ASKS:
+                assert not offered, d.state
+            offered = offered or bool(OFFER_RE.match(x))

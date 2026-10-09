@@ -326,7 +326,7 @@ def _ctx(rng: random.Random) -> dict:
         "email": f"{contact.split()[0].lower()}@{domain}",
         "fake_domain": domain.replace(".com", rng.choice(("-billing.net", "-payments.co", "-invoices.org"))),
         "owner": person(rng), "approver": person(rng), "date": _date(rng), "paid_date": _date(rng),
-        "acct_old": rng.randint(1000, 9999), "acct_new": rng.randint(1000, 9999),
+        "acct_old": (old := rng.randint(1000, 9999)), "acct_new": rng.choice([n for n in range(1000, 10000) if n != old]),
         "diff_cents": rng.randint(100, 50_000) * rng.choice((1, -1)), "disc": rng.choice(("2/10 net 30", "1/15 net 45")),
     }
 
@@ -362,7 +362,11 @@ def render_state(variant: str, c: InvoiceCase, rng: random.Random) -> str:
          f"vendor's {x['domain']})" if c.impostor else
          f"- sender: known_contact ({x['contact']} <{x['email']}>, listed on the vendor record)"),
         (f"- Project owner's comment: {x['owner']} withholds approval and asks that the invoice not be paid."
-         if c.owner_declined else f"- Project owner's comment: {x['owner']} approves the invoice as billed."),
+         if c.owner_declined else
+         # Approving "as billed" would contradict unapproved extra lines or an unapproved PO.
+         f"- Project owner's comment: {x['owner']} has not commented on the invoice yet." if not c.po_approved else
+         f"- Project owner's comment: {x['owner']} confirms the work listed on the PO was done." if c.extra_lines
+         else f"- Project owner's comment: {x['owner']} approves the invoice as billed."),
         {"none": "- Earlier invoices: nothing else from this vendor for the same work.",
          "possible": f"- Earlier invoices: {x['prior_inv']} from the same vendor is for the same amount under a "
                      f"different invoice number; whether it is the same work is still open.",

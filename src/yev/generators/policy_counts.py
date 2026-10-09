@@ -89,8 +89,11 @@ CODE_ASKS = ("Can you apply code {code} to my order?", "I've also got code {code
              "And here's another one: {code}. Can you put it on too?", "Could you add code {code} as well?",
              "One more, {code}. Please apply it.")
 DECLINE = "I'm sorry, I can't add {code}: order {order} already has as many codes as our policy allows."
-HAGGLES = ("Is there any discount you can give me on this?", "That's still more than I hoped to pay. Can you do "
-           "better?", "Could you go a little lower?", "I've seen it cheaper elsewhere. What's the best you can do?")
+# The customer's first ask for a discount, then push-backs that only make sense after an offer.
+FIRST_ASKS = ("Is there any discount you can give me on this?",
+              "I've seen it cheaper elsewhere. Could you take anything off?")
+PUSH_BACKS = ("That's still more than I hoped to pay. Can you do better?", "Could you go a little lower than that?",
+              "Is that really the best you can do?")
 OFFER = "I've checked what I can do. I can offer you {v}% off this order."
 HOLD = "I'm sorry, {v}% is the most I'm able to offer on this order."
 FOLLOW_UPS = ("Hi {first}, just checking whether you managed to find the receipt for order {order}?",
@@ -169,13 +172,13 @@ def transcript(kind: str, limit: int, count: int, ctx: dict, seed: str, variant:
         return lines + _interleave(rng, blocks, fillers)
     if kind == "percent_cap":
         blocks = []
-        haggles = rng.sample(HAGGLES, 3)
+        asks = [rng.choice(FIRST_ASKS), *rng.sample(PUSH_BACKS, 2)]  # first ask, then push-backs after an offer
         if count > 6 and rng.random() < 0.5:
             first = count - rng.choice((2, 3, 5))
-            blocks.append([f"User: {haggles[0]}", f"Assistant: {OFFER.format(v=first)}"])
-        blocks.append([f"User: {haggles[1]}", f"Assistant: {OFFER.format(v=count)}"])
+            blocks.append([f"User: {asks.pop(0)}", f"Assistant: {OFFER.format(v=first)}"])
+        blocks.append([f"User: {asks.pop(0)}", f"Assistant: {OFFER.format(v=count)}"])
         if variant == "hold":
-            blocks.append([f"User: {haggles[2]}", f"Assistant: {HOLD.format(v=count)}"])
+            blocks.append([f"User: {asks.pop(0)}", f"Assistant: {HOLD.format(v=count)}"])
         return lines + _interleave(rng, blocks, fillers)
     # follow_up_cap: the customer's last message, then only labelled follow-ups.
     body = _interleave(rng, [], fillers)
