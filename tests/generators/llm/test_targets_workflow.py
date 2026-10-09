@@ -138,8 +138,7 @@ def _read_scope(p, n):
     if line["Site"] != p["header"]["Our site"]:
         return "not_ours"
     if line["text"] == trade["open"][2]:
-        k = trade["open"][0]
-        assert any(r.startswith(f"Open point on item {k + 1}: whether this order covers {trade['open'][1]} ")
+        assert any(r.startswith(f"Open point: whether this order covers {trade['open'][1]} ")
                    for r in _block(p["text"], "Purchase order items"))
         return "unsure"
     if line["text"] == trade["part"][2]:
@@ -209,7 +208,11 @@ def test_invoice_golds_follow_the_written_packet():
                 assert kind == "evidence"
                 assert q["gold"] == _read_evidence(p, n, _record_of(q)), (q, p["records"])
             seen[(kind, q["gold"])] += 1
-            if q["name"].endswith("_scope") and q["gold"] == "extra_approved":
+            if q["name"].endswith("_scope") and q["gold"] != "unsure":
+                # the open point names no item, and no other gold bills the work it leaves open
+                assert p["lines"][n]["text"] != p["trade"]["open"][2]
+                assert not any("Open point on item" in r for r in _block(p["text"], "Purchase order items"))
+            if q["name"].endswith("_scope") and q["gold"] in ("extra_approved", "extra_unapproved", "unsure"):
                 ref = _ref(p, n)
                 assert all(r["Period"] == p["header"]["Service period"] for r in p["records"].values()
                            if r["Item"] == ref)
@@ -287,6 +290,26 @@ def test_invoice_records_print_unit_and_period():
         for line in p["lines"].values():
             amount = float(line["Amount"].replace(",", ""))
             assert abs(amount - int(line["Quantity"]) * float(line["Rate per unit"].replace(",", ""))) < 0.01
+
+
+def test_invoice_planned_length_reaches_minimum():
+    """Copied tables plus the smallest amounts the length plan asks for reach the 2,000-token ingest minimum."""
+    from yev.generators.llm.documents import WORDS_PER_TOKEN
+    from yev.generators.llm.targets import workflow_invoice as wi
+    lo = PLANNED_FAMILIES["invoice_line"].tokens[0]
+    groups = _groups("invoice_line", 1000, seed=11)
+    ok = 0
+    for g in groups:
+        brief = g["states"][0]["brief"]
+        n_msgs = len(re.findall(r"^\d+\. ", brief.split("Messages (", 1)[1].split("\n\n", 1)[0], re.M))
+        assert n_msgs >= 3
+        plan = brief.split("Length plan: ", 1)[1]
+        assert f"{wi.TERMS_PARAGRAPHS[0]} to {wi.TERMS_PARAGRAPHS[1]} paragraphs" in plan
+        assert f"{wi.MESSAGE_WORDS[0]} to {wi.MESSAGE_WORDS[1]} words" in plan
+        words = wi.TERMS_PARAGRAPHS[0] * wi.TERMS_WORDS[0] + n_msgs * wi.MESSAGE_WORDS[0]
+        est = len(g["scene"] + brief) / 4 + words / WORDS_PER_TOKEN
+        ok += est >= lo
+    assert ok / len(groups) >= 0.95, ok
 
 
 # --- cs reader ------------------------------------------------------------------------------------
@@ -369,9 +392,21 @@ def test_cs_levels_have_concrete_anchors():
         assert [o["key"] for o in opts] == ["0", "1", "2", "3", "4"]
         assert len({o["description"] for o in opts}) == 5
     u = [o["description"] for o in qs["urgency"]["options"]]
-    assert "more than seven days" in u[1] and "two to seven days" in u[2] and "today or by tomorrow" in u[3]
+    assert "more than seven days" in u[1] and "three to seven days" in u[2] and "today or by tomorrow" in u[3]
+    assert scenes.URGENCY_DAYS == {1: (10, 30), 2: (3, 7)}   # level 2 starts after "today or by tomorrow"
     fr = [o["description"] for o in qs["frustration"]["options"]]
     assert "first" in fr[1] and "second" in fr[2] and "third or later" in fr[3] and "cancel" in fr[4]
+
+
+def test_cs_pairs_share_a_writer_batch():
+    fam = PLANNED_FAMILIES["cs_scales_actions"]
+    for seed in (0, 1, 2):
+        where = {}
+        for b in plan_batches(fam, BIG, seed):
+            for g in b["groups"]:
+                where.setdefault(g["scene"], set()).add(b["batch_id"])
+        assert all(len(v) == 1 for v in where.values())
+        assert sum(1 for b in plan_batches(fam, 40, seed) for _ in b["groups"]) == 40
 
 
 def test_cs_near_neighbour_pairs():

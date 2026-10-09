@@ -7,8 +7,8 @@ messages out. For each of two asked lines (never the same item, and neither line
   wording), component_also_billed (a part another item's rate includes, with that item billed on a third line),
   extra_approved (an approved change order adds it), extra_unapproved (not in the order and nothing approves it;
   half are a similar-sounding extra the order's text rules out, and some have a pending change request or a vendor
-  email saying the work was done), not_ours (another organisation's site), unsure (the order's open point is about
-  exactly this item).
+  email saying the work was done), not_ours (another organisation's site), unsure (the line bills exactly the work the
+  order's open point leaves to be agreed).
 - completion: what our records show for the service period. confirmed / less / not_done come from our single
   record in the line's unit and period; unsure means two such records of ours disagree; vendor_only means only the
   vendor's paperwork has a figure for the period; none means no record at all for the period.
@@ -56,6 +56,15 @@ DECOYS: dict[str, tuple[str, ...]] = {
 NOT_OURS_DECOYS: dict[str, tuple[str, ...]] = {"vendor_only": ("vendor", "other_line"), "none": ("other_line",)}
 # An extra approved this month has no earlier deliveries, so it carries no earlier-period or running-total record.
 NO_HISTORY = ("other_period", "cumulative")
+NO_HISTORY_SCOPES = ("extra_approved", "extra_unapproved", "unsure")   # one-off or disputed work: no history of ours
+# Writing amounts that land the packet in the 2,000-8,000 token range (the copied tables alone are about 800-1,300).
+TERMS_PARAGRAPHS = (8, 12)
+TERMS_WORDS = (80, 120)        # per paragraph
+MESSAGE_WORDS = (150, 250)     # per message
+TARGET_TOKENS = (3000, 5000)
+TERMS_TOPICS = ("site access and sign-in", "insurance", "health and safety", "how invoices must be laid out",
+                "payment and remittance", "how disputes are raised", "confidentiality", "record keeping",
+                "subcontracting", "ending the order")
 ALIAS_SHARE = 0.5       # asked priced lines worded differently from the order
 NEAR_SHARE = 0.5        # extras that sound like a priced item the order's text rules out
 UNAPPROVED_FLAVOURS = ("silent", "pending", "told")
@@ -72,8 +81,8 @@ SCOPE_OPTIONS: tuple[Option, ...] = (
     Option("extra_unapproved", "The line bills work or goods the order does not include or rules out, and nothing "
                                "approved on our side adds it."),
     Option("not_ours", "The line is for a site or organisation other than ours."),
-    Option("unsure", "The order marks this very item as an open point still to be agreed, so the packet cannot "
-                     "settle it."),
+    Option("unsure", "The line bills the very work that the order's open point leaves to be agreed, so the packet "
+                     "cannot settle it."),
 )
 COMPLETION_OPTIONS: tuple[Option, ...] = (
     Option("confirmed", "Our own record of this line, in its unit and for the service period, shows exactly the "
@@ -81,8 +90,8 @@ COMPLETION_OPTIONS: tuple[Option, ...] = (
     Option("less", "Our own record of this line, in its unit and for the service period, shows more than zero but "
                    "fewer than billed."),
     Option("not_done", "Our own record of this line, in its unit and for the service period, shows zero."),
-    Option("vendor_only", "Only the vendor's own paperwork gives a figure for this line in the service period; "
-                          "none of our records does."),
+    Option("vendor_only", "Only an evidence record kept by the vendor gives a figure for this line in the service "
+                          "period; none of our records does."),
     Option("none", "No record at all, ours or the vendor's, gives a figure for this line in the service period."),
     Option("unsure", "Two of our own records count this line in its unit for the service period, and their "
                      "figures differ."),
@@ -170,8 +179,8 @@ def plan_invoice(rng: random.Random, index: int, domain: str) -> Group:
     vendor = f"{rng.choice(VENDOR_WORDS)} {rng.choice(VENDOR_SUFFIXES)}"
     clerk, owner, role = person(rng), person(rng), rng.choice(OWNER_ROLES)
     contact = person(rng)
-    org = f"{_title(domain)} ({rng.choice(STREETS).split()[0]} office)"
-    our_street, far_street = rng.sample(STREETS, 2)
+    our_street, far_street, org_street = rng.sample(STREETS, 3)
+    org = f"{_title(domain)} ({org_street.split()[0]} office)"
     our_site = f"{rng.randint(2, 180)} {our_street}"
     other_site = f"{rng.choice(OTHER_ORGS)}, {rng.randint(2, 180)} {far_street}"
     rates = [_money(rng, it[5]) for it in items]
@@ -274,7 +283,7 @@ def plan_invoice(rng: random.Random, index: int, domain: str) -> Group:
             targets[line["role"]] = (rng.choice(line["counting"]), "yes")
             continue
         pool = NOT_OURS_DECOYS[c] if line["scope"] == "not_ours" else DECOYS[c]
-        if line["scope"] == "extra_approved":
+        if line["scope"] in NO_HISTORY_SCOPES:
             pool = tuple(x for x in pool if x not in NO_HISTORY)
         flavour = rng.choice(pool)
         lo, hi = line["qspan"]
@@ -315,7 +324,7 @@ def plan_invoice(rng: random.Random, index: int, domain: str) -> Group:
 
     po_rows = [f"Item {k + 1} | {po_text(k)} | Unit: {_unit(it[2], it[3], it[4])[1]} | Rate per unit: "
                f"{_fmt(rates[k])}" for k, it in enumerate(items)]
-    po_rows.append(f"Open point on item {trade['open'][0] + 1}: whether this order covers {trade['open'][1]} is "
+    po_rows.append(f"Open point: whether this order covers {trade['open'][1]} is "
                    f"still to be agreed in writing by {owner}, the {role}.")
     changes = []
     co_no = rng.randint(100, 900)
@@ -339,7 +348,7 @@ def plan_invoice(rng: random.Random, index: int, domain: str) -> Group:
         if flavours.get(line["role"]) == "told":
             messages.append(f"A second email from {contact} at {vendor} saying their team also carried out "
                             f"\"{line['text']}\" while on site this month and has billed it on this invoice.")
-    messages += [f"{m[:1].upper()}{m[1:]}." for m in rng.sample(QUIET_MESSAGES, rng.randint(1, 2))]
+    messages += [f"{m[:1].upper()}{m[1:]}." for m in rng.sample(QUIET_MESSAGES, rng.randint(2, 3))]
     rng.shuffle(messages)
 
     inv = rng.randint(10000, 99999)
@@ -366,6 +375,11 @@ def plan_invoice(rng: random.Random, index: int, domain: str) -> Group:
         + "\n".join(f"{i}. {msg}" for i, msg in enumerate(messages, 1)),
         "The packet holds no order items, change orders, approvals, evidence records or messages beyond these, and "
         "nothing in it comments on whether a line is in order, delivered or due for payment.",
+        f"Length plan: under \"Purchase order:\" write {TERMS_PARAGRAPHS[0]} to {TERMS_PARAGRAPHS[1]} paragraphs of "
+        f"ordinary order terms, {TERMS_WORDS[0]} to {TERMS_WORDS[1]} words each, on topics such as "
+        f"{', '.join(rng.sample(TERMS_TOPICS, 6))}; no paragraph may say which work the order includes, give a "
+        f"rate or say what was delivered. Write each message as {MESSAGE_WORDS[0]} to {MESSAGE_WORDS[1]} words. "
+        f"The whole packet comes to about {TARGET_TOKENS[0]:,} to {TARGET_TOKENS[1]:,} tokens.",
     ])
     scene = (f"{an(domain, start=True)}. {clerk}, a member of the {domain}'s accounts payable team, checks "
              f"supplier invoices before they are paid. The state is one review packet from the invoice queue: "

@@ -240,7 +240,7 @@ URGENCY_CUES: dict[int, tuple[str, ...]] = {
     4: ("says that right now {harm}",
         "says the problem is costing them right now: {harm}"),
 }
-URGENCY_DAYS: dict[int, tuple[int, int]] = {1: (10, 30), 2: (2, 7)}
+URGENCY_DAYS: dict[int, tuple[int, int]] = {1: (10, 30), 2: (3, 7)}   # level 3 is today or tomorrow
 NTH: tuple[str, ...] = ("third", "fourth", "fifth")
 # Frustration cues by level; {nth} is third, fourth or fifth.
 FRUSTRATION_CUES: dict[int, tuple[str, ...]] = {

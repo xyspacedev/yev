@@ -34,7 +34,7 @@ __all__ = ["URGENCY_OPTIONS", "FRUSTRATION_OPTIONS", "ACTION_OPTIONS", "ACCOUNTE
 URGENCY_OPTIONS: tuple[Option, ...] = (
     Option("0", "0, none: the customer says nothing depends on when this is sorted."),
     Option("1", "1, low: the customer names a time limit more than seven days away."),
-    Option("2", "2, moderate: the customer names a time limit two to seven days away."),
+    Option("2", "2, moderate: the customer names a time limit three to seven days away."),
     Option("3", "3, high: the customer needs it today or by tomorrow."),
     Option("4", "4, critical: the customer is losing something right now, for as long as the problem lasts."),
 )
@@ -69,7 +69,11 @@ ACTION_QUESTIONS: tuple[str, ...] = (
     "Which of these steps do the team rules call for at the end of this chat?",
 )
 PAIR_SHARE = 0.30                               # groups that belong to a near-neighbour pair
-PAIR_START = PAIR_SHARE / (2 - PAIR_SHARE)      # chance a new group starts a pair (it then plans its partner too)
+CS_TOKENS = (500, 3000)
+CS_PER_BATCH = per_batch(1, CS_TOKENS)
+# Chance a new group starts a pair (it then plans its partner at the next index). A pair never starts on the last
+# slot of a writer batch, so both members always land in the same batch; the other slots make up for it.
+PAIR_START = PAIR_SHARE / (2 - PAIR_SHARE) * CS_PER_BATCH / (CS_PER_BATCH - 1)
 FLAG_SHARE = 0.3                                # chance each yes/no fact of the chat holds
 _PAIR_ATTR = "_yev_cs_pair"                     # the partner waiting for the next index, kept on the run's rng
 _PAIR_LEVELS = (1 / 8, 2 / 8, 2 / 8, 2 / 8, 1 / 8)   # level shares of a varied scale in pairs (k, k+1), k uniform
@@ -150,7 +154,7 @@ def plan_cs(rng: random.Random, index: int, domain: str) -> Group:
         _, p, u, f, flags = waiting
         return _cs_group(rng, index, p, u, f, flags, "_pair")
     p = _cs_plan(rng, domain)
-    if rng.random() < PAIR_START:
+    if index % CS_PER_BATCH != CS_PER_BATCH - 1 and rng.random() < PAIR_START:
         k = rng.randrange(4)
         flat = rng.randrange(5)
         lv = [k, k + 1]
@@ -352,9 +356,9 @@ def plan_security(rng: random.Random, index: int, domain: str) -> Group:
 
 INVOICE_FORMAT = (
     'A supplier invoice review packet in plain text, in this order, each part under its heading on a line of its '
-    'own: "Invoice:" with the header rows and then the invoice line rows; "Purchase order:" with a few paragraphs '
-    "of ordinary order terms (site access, insurance, invoicing and payment rules; none of them about which work is "
-    'included or what was delivered), then the priced item rows and the open point; "Change orders and change requests:"; "Evidence records:"; "Prior invoices:"; "Messages:" '
+    'own: "Invoice:" with the header rows and then the invoice line rows; "Purchase order:" with the paragraphs of '
+    "ordinary order terms the brief's length plan asks for (none of them about which work is included, rates or "
+    'what was delivered), then the priced item rows and the open point; "Change orders and change requests:"; "Evidence records:"; "Prior invoices:"; "Messages:" '
     "with each message written out in full, with sender and date. Every row the brief gives is copied exactly, one "
     'per line starting "- ", with every field, figure, unit and period unchanged. The packet adds no figure, record, '
     "approval or comment on the lines beyond what the brief gives."
@@ -384,7 +388,7 @@ CS_SCALES_ACTIONS = PlannedFamily(
     name="cs_scales_actions",
     description="Customer support chats between a customer and an AI assistant, with the team's rules for the "
                 "next step on the ticket. The customer's timing, mood and requests come out in what they write.",
-    state_format=CS_FORMAT, tokens=(500, 3000), per_batch=per_batch(1, (500, 3000)), plan=plan_cs,
+    state_format=CS_FORMAT, tokens=CS_TOKENS, per_batch=CS_PER_BATCH, plan=plan_cs,
 )
 SECURITY_CONTEXT = PlannedFamily(
     name="security_context",
