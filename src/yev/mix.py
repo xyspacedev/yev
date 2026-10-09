@@ -113,6 +113,51 @@ def take_units(decisions: list[Decision], rows: int, rng: random.Random, first: 
     return out
 
 
+REPEAT_FILTER_FIELDS = ("family", "source")
+
+
+def _repeat_pass(taken: list[Decision], spec: dict, name: str, rng_key: str, first_copy: int) -> tuple[list[Decision], int]:
+    """One replay pass; returns the copies and the next unused copy number."""
+    r = float(spec.get("repeat", 0) or 0)
+    flt = spec.get("repeat_filter", {})
+    bad = sorted(set(flt) - set(REPEAT_FILTER_FIELDS))
+    if bad:
+        raise ValueError(f"block {name}: repeat_filter keys {bad} not in {REPEAT_FILTER_FIELDS}")
+    if r <= 0:
+        return [], first_copy
+    want = {f: set(v) for f, v in flt.items()}
+    units = _units([d for d in taken if all(getattr(d, f) in v for f, v in want.items())])
+    keys = sorted(units)
+    whole = int(r)
+    out = [_copy(d, first_copy + k) for k in range(whole) for key in keys for d in units[key]]
+    frac = r - whole
+    nxt = first_copy + whole
+    if frac > 0:
+        rng = random.Random(rng_key)
+        pick = list(keys)
+        rng.shuffle(pick)
+        chosen = sorted(pick[:round(frac * len(pick))])
+        out += [_copy(d, nxt) for key in chosen for d in units[key]]
+        nxt += 1
+    return out, nxt
+
+
+def repeat_rows(taken: list[Decision], block: dict, seed: int) -> list[Decision]:
+    """Extra train copies of a block's taken rows: int(repeat) full passes plus a fraction of units, then any
+    `repeat_extra` passes with their own filters. Each copy is its own unit (new id and cluster_id), so it
+    never shares a batch with its original."""
+    name = block["name"]
+    out, nxt = _repeat_pass(taken, block, name, f"{seed}:{name}:repeat", 1)
+    for i, spec in enumerate(block.get("repeat_extra", []), start=1):
+        more, nxt = _repeat_pass(taken, spec, name, f"{seed}:{name}:repeat:{i}", nxt)
+        out += more
+    return out
+
+
+def _copy(d: Decision, k: int) -> Decision:
+    return replace(d, id=f"{d.id}#r{k}", cluster_id=f"r{k}:{unit_key(d)}")
+
+
 def _summary(rows: list[Decision]) -> dict:
     return {
         "rows": len(rows),
@@ -205,7 +250,8 @@ def build_mix(recipe: dict, fingerprints: Fingerprints) -> MixResult:
             pool = [d for d in pool if holdout_key(d) not in chosen]
             check_min("calibration", len(cal_held), "calibration_min_rows")
         taken = [replace(d, split="train") for d in take_units(pool, block["rows"], rng, first=forced)]
-        train.extend(taken)
+        extra = repeat_rows(taken, block, seed)
+        train.extend(taken + extra)
         dev.extend(held)
         block_cal.extend(cal_held)
         done[block["name"]] = (taken, held + cal_held)
@@ -213,6 +259,8 @@ def build_mix(recipe: dict, fingerprints: Fingerprints) -> MixResult:
             "available": available, "train": len(taken), "dev": len(held),
             "shortfall": max(0, block["rows"] - len(taken)),
         }
+        if extra:
+            info["repeated"] = len(extra)
         if cal_share > 0:
             info["calibration"] = len(cal_held)
         if "exclude_from" in block or "split_follows" in block:

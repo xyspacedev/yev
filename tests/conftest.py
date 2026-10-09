@@ -55,3 +55,9 @@ def chat_row(id_, letters, gold_letter, type_="choice", cluster=None, examples=0
 @pytest.fixture
 def make_row():
     return chat_row
+
+
+@pytest.fixture
+def empty_fingerprints():
+    from yev.filters.contamination import build_fingerprints
+    return build_fingerprints([])
