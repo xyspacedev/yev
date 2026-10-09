@@ -57,7 +57,7 @@ def _day(s):
 
 def test_families_registered_with_table_sizes():
     want = {"judge_planted_error": ((300, 2000), 10), "planted_note": ((400, 2500), 8),
-            "policy_amendment": ((1500, 5000), 7)}
+            "policy_amendment": ((1000, 5000), 8)}
     for name, (tokens, per_batch) in want.items():
         fam = PLANNED_FAMILIES[name]
         assert isinstance(fam, PlannedFamily) and fam.name == name

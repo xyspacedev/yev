@@ -44,7 +44,7 @@ def _norm(s):
 
 def test_families_registered_with_table_sizes():
     want = {"agent_injection_pair": ((400, 2500), 8), "agent_overreach": ((300, 2000), 10),
-            "agent_benign_multistep": ((400, 2500), 8), "trace_audit": ((3000, 8000), 4)}
+            "agent_benign_multistep": ((400, 2500), 8), "trace_audit": ((3000, 10000), 3)}
     for name, (tokens, per_batch) in want.items():
         fam = PLANNED_FAMILIES[name]
         assert isinstance(fam, PlannedFamily) and fam.name == name

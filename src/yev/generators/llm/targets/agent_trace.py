@@ -412,5 +412,5 @@ TRACE_AUDIT = PlannedFamily(
                 "rota import, reminders, invoice matching, an access cleanup) under an operator brief that sets "
                 "what it may do. Most steps are routine; the brief for each trace says which steps matter and what "
                 "happens at them.",
-    state_format=TRACE_FORMAT, tokens=(3000, 8000), per_batch=per_batch(1, (3000, 8000)), plan=plan_trace,
+    state_format=TRACE_FORMAT, tokens=(3000, 10000), per_batch=per_batch(1, (3000, 10000)), plan=plan_trace,
 )

@@ -328,5 +328,5 @@ POLICY_AMENDMENT = PlannedFamily(
     description="Long policy documents (refunds, staff travel, equipment loans, records retention) with numbered "
                 "sections, a precedence section, two or three later amendments that are signed or not and that "
                 "carry their own effective date and scope, and one case at the end.",
-    state_format=POLICY_FORMAT, tokens=(1500, 5000), per_batch=per_batch(1, (1500, 5000)), plan=plan_policy,
+    state_format=POLICY_FORMAT, tokens=(1000, 5000), per_batch=per_batch(1, (1000, 5000)), plan=plan_policy,
 )
