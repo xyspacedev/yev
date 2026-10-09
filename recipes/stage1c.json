@@ -270,7 +270,7 @@
       "files": [
         "data/stage1c-pool/agent_injection_pair.jsonl"
       ],
-      "rows": 2400,
+      "rows": 1200,
       "dev_share": 0.05,
       "dev_min_rows": 60,
       "calibration_share": 0.05,
@@ -282,7 +282,7 @@
         "data/stage1c-pool/agent_overreach.jsonl",
         "data/stage1c-pool/agent_overreach_rules.jsonl"
       ],
-      "rows": 1600,
+      "rows": 1120,
       "dev_share": 0.05,
       "dev_min_rows": 60,
       "calibration_share": 0.05,
@@ -293,7 +293,7 @@
       "files": [
         "data/stage1c-pool/agent_benign_multistep.jsonl"
       ],
-      "rows": 1000,
+      "rows": 500,
       "dev_share": 0.05,
       "dev_min_rows": 60,
       "calibration_share": 0.05,
@@ -304,7 +304,7 @@
       "files": [
         "data/stage1c-pool/trace_audit.jsonl"
       ],
-      "rows": 1000,
+      "rows": 500,
       "dev_share": 0.05,
       "dev_min_rows": 60,
       "calibration_share": 0.05,
@@ -315,7 +315,7 @@
       "files": [
         "data/stage1c-pool/disclosure_gate.jsonl"
       ],
-      "rows": 1620,
+      "rows": 810,
       "dev_share": 0.05,
       "dev_min_rows": 60,
       "calibration_share": 0.05,
@@ -326,7 +326,7 @@
       "files": [
         "data/stage1c-pool/grounded_offer.jsonl"
       ],
-      "rows": 1000,
+      "rows": 500,
       "dev_share": 0.05,
       "dev_min_rows": 60,
       "calibration_share": 0.05,
@@ -337,7 +337,7 @@
       "files": [
         "data/stage1c-pool/persona_style_rule.jsonl"
       ],
-      "rows": 900,
+      "rows": 450,
       "dev_share": 0.05,
       "dev_min_rows": 60,
       "calibration_share": 0.05,
@@ -359,7 +359,7 @@
       "files": [
         "data/stage1c-pool/judge_planted_error.jsonl"
       ],
-      "rows": 1200,
+      "rows": 600,
       "dev_share": 0.05,
       "dev_min_rows": 60,
       "calibration_share": 0.05,
@@ -370,7 +370,7 @@
       "files": [
         "data/stage1c-pool/planted_note.jsonl"
       ],
-      "rows": 1200,
+      "rows": 600,
       "dev_share": 0.05,
       "dev_min_rows": 60,
       "calibration_share": 0.05,
@@ -381,7 +381,7 @@
       "files": [
         "data/stage1c-pool/policy_amendment.jsonl"
       ],
-      "rows": 1110,
+      "rows": 555,
       "dev_share": 0.05,
       "dev_min_rows": 60,
       "calibration_share": 0.05,
@@ -392,7 +392,7 @@
       "files": [
         "data/stage1c-pool/invoice_line.jsonl"
       ],
-      "rows": 1800,
+      "rows": 900,
       "dev_share": 0.05,
       "dev_min_rows": 60,
       "calibration_share": 0.05,
@@ -425,7 +425,7 @@
       "files": [
         "data/stage1c-pool/cs_scales_actions.jsonl"
       ],
-      "rows": 1800,
+      "rows": 900,
       "dev_share": 0.05,
       "dev_min_rows": 60,
       "calibration_share": 0.05,
@@ -436,7 +436,7 @@
       "files": [
         "data/stage1c-pool/security_context.jsonl"
       ],
-      "rows": 1700,
+      "rows": 850,
       "dev_share": 0.05,
       "dev_min_rows": 60,
       "calibration_share": 0.05,

@@ -8,11 +8,11 @@ bb = {b["name"]: b for b in B["blocks"]}
 cb = {b["name"]: b for b in C["blocks"]}
 
 NEW_ROWS = {
-    "agent_injection_pair": 2400, "agent_overreach": 1600, "agent_benign_multistep": 1000, "trace_audit": 1000,
-    "disclosure_gate": 1620, "grounded_offer": 1000, "persona_style_rule": 900, "count_threshold_rule": 1000,
-    "judge_planted_error": 1200, "planted_note": 1200, "policy_amendment": 1110,
-    "invoice_line": 1800, "payment_terms": 400, "invoice_action": 1300, "cs_scales_actions": 1800,
-    "security_context": 1700,
+    "agent_injection_pair": 1200, "agent_overreach": 1120, "agent_benign_multistep": 500, "trace_audit": 500,
+    "disclosure_gate": 810, "grounded_offer": 500, "persona_style_rule": 450, "count_threshold_rule": 1000,
+    "judge_planted_error": 600, "planted_note": 600, "policy_amendment": 555,
+    "invoice_line": 900, "payment_terms": 400, "invoice_action": 1300, "cs_scales_actions": 900,
+    "security_context": 850,
 }
 OTHER_OPUS = ["access_request", "agent_action", "claim_evidence", "expenses", "intent", "severity", "sentiment"]
 
