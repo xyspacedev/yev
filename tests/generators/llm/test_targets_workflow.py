@@ -306,6 +306,10 @@ def test_invoice_planned_length_reaches_minimum():
         plan = brief.split("Length plan: ", 1)[1]
         assert f"{wi.TERMS_PARAGRAPHS[0]} to {wi.TERMS_PARAGRAPHS[1]} paragraphs" in plan
         assert f"{wi.MESSAGE_WORDS[0]} to {wi.MESSAGE_WORDS[1]} words" in plan
+        assert "no paragraph may say which work the order includes, give a rate or say what was delivered" in plan
+        assert wi.MESSAGE_FENCE in plan   # message filler is fenced like the terms paragraphs
+        for word in ("done", "delivered", "approved", "recorded", "no figure"):
+            assert word in wi.MESSAGE_FENCE
         words = wi.TERMS_PARAGRAPHS[0] * wi.TERMS_WORDS[0] + n_msgs * wi.MESSAGE_WORDS[0]
         est = len(g["scene"] + brief) / 4 + words / WORDS_PER_TOKEN
         ok += est >= lo

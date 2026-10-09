@@ -62,6 +62,9 @@ TERMS_PARAGRAPHS = (8, 12)
 TERMS_WORDS = (80, 120)        # per paragraph
 MESSAGE_WORDS = (150, 250)     # per message
 TARGET_TOKENS = (3000, 5000)
+# What a message's words beyond its given facts may hold, so the filler can never move a gold.
+MESSAGE_FENCE = ("a message's words beyond its given facts are greetings, logistics and general courtesy only; they "
+                 "say nothing about which work was done, delivered, approved or recorded, and give no figure.")
 TERMS_TOPICS = ("site access and sign-in", "insurance", "health and safety", "how invoices must be laid out",
                 "payment and remittance", "how disputes are raised", "confidentiality", "record keeping",
                 "subcontracting", "ending the order")
@@ -378,7 +381,8 @@ def plan_invoice(rng: random.Random, index: int, domain: str) -> Group:
         f"Length plan: under \"Purchase order:\" write {TERMS_PARAGRAPHS[0]} to {TERMS_PARAGRAPHS[1]} paragraphs of "
         f"ordinary order terms, {TERMS_WORDS[0]} to {TERMS_WORDS[1]} words each, on topics such as "
         f"{', '.join(rng.sample(TERMS_TOPICS, 6))}; no paragraph may say which work the order includes, give a "
-        f"rate or say what was delivered. Write each message as {MESSAGE_WORDS[0]} to {MESSAGE_WORDS[1]} words. "
+        f"rate or say what was delivered. Write each message as {MESSAGE_WORDS[0]} to {MESSAGE_WORDS[1]} words; "
+        f"{MESSAGE_FENCE} "
         f"The whole packet comes to about {TARGET_TOKENS[0]:,} to {TARGET_TOKENS[1]:,} tokens.",
     ])
     scene = (f"{an(domain, start=True)}. {clerk}, a member of the {domain}'s accounts payable team, checks "
