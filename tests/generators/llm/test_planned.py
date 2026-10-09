@@ -66,7 +66,9 @@ def make_run(tmp_path, family=TOY, n_groups=4, seed=0, lines=None) -> tuple[Path
     batches = plan_batches(family, n_groups, seed)
     (run / "batches").mkdir(parents=True)
     for b in batches:
-        (run / "batches" / f"{b['batch_id']}.json").write_text(json.dumps(b))
+        (run / "batches" / f"{b['batch_id']}.json").write_text(json.dumps(planned.public_spec(b)))
+        planned.plan_path(run, b["batch_id"]).parent.mkdir(parents=True, exist_ok=True)
+        planned.plan_path(run, b["batch_id"]).write_text(json.dumps(b))
         out = run / b["output"]
         out.parent.mkdir(parents=True, exist_ok=True)
         got = lines(b) if lines else [{"gid": g["gid"], "sid": s["sid"], "state": words(50)}
@@ -169,6 +171,16 @@ def test_ingest_drops_out_of_range_length(tmp_path):
     assert rows == [] and report["too_short"] == 1 and report["too_long"] == 1
 
 
+def test_contrastive_group_dropped_if_a_state_is_lost_at_ingest(tmp_path):
+    def lines(b):
+        g = b["groups"][0]["gid"]
+        return [{"gid": g, "sid": "obey", "state": words(50)}, {"gid": g, "sid": "ignore", "state": words(401)}]
+    run, _ = make_run(tmp_path, n_groups=1, lines=lines)
+    rows, report = ingest_planned(run, count=count_words)
+    assert len(rows) == 1 and report["too_long"] == 1
+    assert keep_groups(rows, rows) == []
+
+
 def test_contrastive_group_dropped_if_any_question_fails(tmp_path):
     run, _ = make_run(tmp_path, n_groups=2)
     rows, _ = ingest_planned(run, count=count_words)
@@ -198,16 +210,21 @@ def test_planned_run_accepted_by_check_prepare(tmp_path, monkeypatch):
     specs = sorted((run / "batches").glob("planned-batch-*.json"))
     assert len(specs) == 2 and all(p.with_suffix(".prompt.md").exists() for p in specs)
     for p in specs:
-        b = json.loads(p.read_text())
+        b = json.loads(planned.plan_path(run, json.loads(p.read_text())["batch_id"]).read_text())
         prompt = p.with_suffix(".prompt.md").read_text()
         assert str((run / b["output"]).resolve()) in prompt
         (run / b["output"]).write_text("".join(
             json.dumps({"gid": g["gid"], "sid": s["sid"], "state": words(60)}) + "\n"
             for g in b["groups"] for s in g["states"]))
+    # nothing the writer can see holds a gold: batches/ has only gold-free specs and prompts
+    for f in (run / "batches").iterdir():
+        assert "gold" not in f.read_text(), f
+    assert all('"gold"' in planned.plan_path(run, json.loads(p.read_text())["batch_id"]).read_text() for p in specs)
     assert cli.main(["synth", "planned-ingest", "--dir", str(run), "--allow-heuristic"]) == 0
     assert json.loads((run / "reports" / "ingest.json").read_text())["rows"] == 8
     assert cli.main(["synth", "check-prepare", "--dir", str(run)]) == 0
     assert (run / "private" / "check-key.json").exists()
+    assert len(list((run / planned.PLAN_DIR).glob("*.json"))) == 2  # the clears leave the plans alone
     # a planned run is a document run: the opus-cluster steps refuse it
     assert cli.main(["synth", "ingest", "--dir", str(run)]) == 2
     assert cli.main(["synth", "doc-ingest", "--dir", str(run), "--allow-heuristic"]) == 2
@@ -230,7 +247,29 @@ def test_planned_run_accepted_by_check_prepare(tmp_path, monkeypatch):
     assert cli.main(["synth", "check-score", "--dir", str(run)]) == 0
     final = list(read_jsonl(run / "final" / "synthetic_docs.jsonl"))
     assert len(final) == 6 and bad_group not in {d.cluster_id for d in final}
+    pilot = json.loads((run / "reports" / "pilot.json").read_text())
+    assert pilot["planned_groups"] == 4 and pilot["final_docs"] == 3
     assert cli.main(["synth", "nodoc-prepare", "--dir", str(run)]) == 0
+
+
+def test_replan_discards_stale_writer_output(tmp_path, monkeypatch):
+    monkeypatch.setitem(PLANNED_FAMILIES, TOY.name, TOY)
+    run = tmp_path / "run"
+
+    def plan(seed):
+        assert cli.main(["synth", "planned-plan", "--family", TOY.name, "--groups", "3", "--seed", str(seed),
+                         "--dir", str(run)]) == 0
+
+    plan(1)
+    b = json.loads(planned.plan_path(run, "planned-batch-000").read_text())
+    (run / b["output"]).write_text("".join(
+        json.dumps({"gid": g["gid"], "sid": s["sid"], "state": words(60)}) + "\n"
+        for g in b["groups"] for s in g["states"]))
+    plan(2)
+    assert not (run / b["output"]).exists()
+    assert cli.main(["synth", "planned-ingest", "--dir", str(run), "--allow-heuristic"]) == 0
+    report = json.loads((run / "reports" / "ingest.json").read_text())
+    assert report["rows"] == 0 and report["missing_file"] == 1
 
 
 FINGERPRINTS = Path(__file__).resolve().parents[3] / "data" / "bench" / "fingerprints.json"

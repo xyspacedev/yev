@@ -337,24 +337,71 @@ def _refuse_doc_run(run: Path, what: str) -> bool:
     return False
 
 
-def cmd_synth_doc_plan(args) -> int:
-    run = Path(args.dir)
+# check keys under private/; ingest and check-prepare clear these, leaving private/plan/ (planned runs) intact
+PRIVATE_KEYS = ("private/check-key.json", "private/attrib-key.json", "private/nodoc-key.json",
+                "private/diff-key.json")
+
+
+def _clear_keys(run: Path) -> None:
+    """Remove the check keys; private/ itself goes too when nothing else (a planned run's plan) is left in it."""
+    _clear(run, *PRIVATE_KEYS)
+    private = run / "private"
+    if private.is_dir() and not any(private.iterdir()):
+        private.rmdir()
+
+
+def _start_doc_run(run: Path, batches: list[dict], prompt, public=None) -> None:
+    """Run setup shared by doc-plan and planned-plan: clear the earlier plan and everything derived from it, then
+    write batches/<id>.json and batches/<id>.prompt.md per batch (writer output goes to written/<id>.jsonl).
+
+    With `public` (planned runs) batches/ gets only public(batch), the full plan goes to private/plan/, and all of
+    written/ is cleared: planned outputs are bound to the plan, so a stale file would be relabelled with new golds.
+    Without it (document runs) only written/ files of batches no longer planned are removed."""
     _clear(run, "batches", "ingested.jsonl", "checked.jsonl", "check", "attrib", "private", "final", "reports",
            *DOC_LATER_FILES)
-    planned = documents.plan_doc_batches(args.docs, args.per_batch, args.seed)
+    if public is not None:
+        _clear(run, "written")
     (run / "written").mkdir(parents=True, exist_ok=True)
-    live = {b["batch_id"] for b in planned}
+    live = {b["batch_id"] for b in batches}
     for stale in (run / "written").glob("*.jsonl"):
         if stale.stem not in live:
             stale.unlink()
-    for b in planned:
+    for b in batches:
         spec_path = run / "batches" / f"{b['batch_id']}.json"
         spec_path.parent.mkdir(parents=True, exist_ok=True)
-        spec_path.write_text(json.dumps(b, indent=2))
+        spec_path.write_text(json.dumps(public(b) if public else b, indent=2))
+        if public is not None:
+            path = planned.plan_path(run, b["batch_id"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(b, indent=2))
         out = (run / "written" / f"{b['batch_id']}.jsonl").resolve()
-        spec_path.with_suffix(".prompt.md").write_text(documents.doc_writer_prompt(b, str(out)))
-    n_inj = sum(len(b["injection_docs"]) for b in planned)
-    print(f"planned {args.docs} documents in {len(planned)} batches ({n_inj} with an injected instruction)")
+        spec_path.with_suffix(".prompt.md").write_text(prompt(b, str(out)))
+
+
+def _doc_counter(args, step: str, what: str):
+    """(count, method) for doc-ingest / planned-ingest, or None after printing why the tokenizer is unavailable."""
+    try:
+        return documents.load_doc_counter(allow_heuristic=args.allow_heuristic)
+    except padding.TokenizerUnavailable as e:
+        print(f"error: {e}")
+        print(f"{step} measures {what} with the real Qwen3.5 tokenizer (run with --extra train and the "
+              "tokenizer in ~/.cache/huggingface); pass --allow-heuristic to estimate with len/4 x "
+              f"{padding.HEURISTIC_FACTOR} instead.")
+        return None
+
+
+def _clear_for_ingest(run: Path) -> None:
+    _clear(run, "ingested.jsonl", "checked.jsonl", "final", "check", "attrib",
+           "reports/check.json", "reports/pilot.json", *DOC_LATER_FILES)
+    _clear_keys(run)
+
+
+def cmd_synth_doc_plan(args) -> int:
+    run = Path(args.dir)
+    batches = documents.plan_doc_batches(args.docs, args.per_batch, args.seed)
+    _start_doc_run(run, batches, documents.doc_writer_prompt)
+    n_inj = sum(len(b["injection_docs"]) for b in batches)
+    print(f"planned {args.docs} documents in {len(batches)} batches ({n_inj} with an injected instruction)")
     return 0
 
 
@@ -364,16 +411,11 @@ def cmd_synth_doc_ingest(args) -> int:
         hint = "it is a planned run; use synth planned-ingest" if _is_planned_run(run) else "run synth doc-plan first"
         print(f"error: {run} has no document batches; {hint}")
         return 2
-    try:
-        count, method = documents.load_doc_counter(allow_heuristic=args.allow_heuristic)
-    except padding.TokenizerUnavailable as e:
-        print(f"error: {e}")
-        print("doc-ingest measures documents with the real Qwen3.5 tokenizer (run with --extra train and the "
-              "tokenizer in ~/.cache/huggingface); pass --allow-heuristic to estimate with len/4 x "
-              f"{padding.HEURISTIC_FACTOR} instead.")
+    got = _doc_counter(args, "doc-ingest", "documents")
+    if got is None:
         return 2
-    _clear(run, "ingested.jsonl", "checked.jsonl", "final", "check", "attrib", "private",
-           "reports/check.json", "reports/pilot.json", *DOC_LATER_FILES)
+    count, method = got
+    _clear_for_ingest(run)
     stats, dropped = Counter(), []
     rows = documents.ingest_docs(run, count=count, stats=stats, dropped=dropped, method=method)
     write_jsonl(run / "ingested.jsonl", rows)
@@ -389,20 +431,8 @@ def cmd_synth_planned_plan(args) -> int:
         print(f"error: unknown planned family {args.family!r}; known: {', '.join(sorted(PLANNED_FAMILIES)) or 'none'}")
         return 2
     run = Path(args.dir)
-    _clear(run, "batches", "ingested.jsonl", "checked.jsonl", "check", "attrib", "private", "final", "reports",
-           *DOC_LATER_FILES)
     batches = planned.plan_batches(family, args.groups, args.seed)
-    (run / "written").mkdir(parents=True, exist_ok=True)
-    live = {b["batch_id"] for b in batches}
-    for stale in (run / "written").glob("*.jsonl"):
-        if stale.stem not in live:
-            stale.unlink()
-    for b in batches:
-        spec_path = run / "batches" / f"{b['batch_id']}.json"
-        spec_path.parent.mkdir(parents=True, exist_ok=True)
-        spec_path.write_text(json.dumps(b, indent=2))
-        out = (run / b["output"]).resolve()
-        spec_path.with_suffix(".prompt.md").write_text(planned.writer_prompt(b, str(out)))
+    _start_doc_run(run, batches, planned.writer_prompt, public=planned.public_spec)
     n_states = sum(len(g["states"]) for b in batches for g in b["groups"])
     print(f"planned {args.groups} {family.name} groups ({n_states} states) in {len(batches)} batches")
     return 0
@@ -413,15 +443,11 @@ def cmd_synth_planned_ingest(args) -> int:
     if not _is_planned_run(run):
         print(f"error: {run} has no planned batches; run synth planned-plan first")
         return 2
-    try:
-        count, method = documents.load_doc_counter(allow_heuristic=args.allow_heuristic)
-    except padding.TokenizerUnavailable as e:
-        print(f"error: {e}")
-        print("planned-ingest measures states with the real Qwen3.5 tokenizer; pass --allow-heuristic to estimate "
-              f"with len/4 x {padding.HEURISTIC_FACTOR} instead.")
+    got = _doc_counter(args, "planned-ingest", "states")
+    if got is None:
         return 2
-    _clear(run, "ingested.jsonl", "checked.jsonl", "final", "check", "attrib", "private",
-           "reports/check.json", "reports/pilot.json", *DOC_LATER_FILES)
+    count, method = got
+    _clear_for_ingest(run)
     rows, report = planned.ingest_planned(run, count=count, method=method)
     dropped = report.pop("dropped", [])
     write_jsonl(run / "ingested.jsonl", rows)
@@ -435,8 +461,9 @@ def cmd_synth_ingest(args) -> int:
     run = Path(args.dir)
     if _refuse_doc_run(run, "use synth doc-ingest"):
         return 2
-    _clear(run, "ingested.jsonl", "checked.jsonl", "final", "check", "attrib", "private",
+    _clear(run, "ingested.jsonl", "checked.jsonl", "final", "check", "attrib",
            "reports/check.json", "reports/attrib.json", "reports/pilot.json")
+    _clear_keys(run)
     rows, stats = [], Counter()
     for spec_path in sorted((run / "batches").glob("*.json")):
         b = json.loads(spec_path.read_text())
@@ -459,7 +486,8 @@ def cmd_synth_check_prepare(args) -> int:
     if not (run / "ingested.jsonl").exists():
         print(f"missing {run / 'ingested.jsonl'}; run synth ingest first")
         return 2
-    _clear(run, "check", "checked.jsonl", "attrib", "private", "final",
+    _clear_keys(run)
+    _clear(run, "check", "checked.jsonl", "attrib", "final",
            "reports/check.json", "reports/attrib.json", "reports/pilot.json", *DOC_LATER_FILES)
     doc_run = _is_doc_run(run)
     part_size = args.doc_part_size if doc_run else args.part_size
@@ -524,8 +552,7 @@ def _doc_check_score(run: Path, key: dict, answers: list[dict], bad: int, n: int
     specs = [json.loads(p.read_text()) for p in sorted((run / "batches").glob("*.json"))]
     ingest = json.loads((run / "reports" / "ingest.json").read_text()) if (run / "reports" / "ingest.json").exists() else {}
     if is_planned:
-        pilot = planned.planned_pilot_report([b for b in specs if planned.is_planned_spec(b)], ingest, ingested,
-                                             survivors, kept)
+        pilot = planned.planned_pilot_report(planned.load_plans(run), ingest, ingested, survivors, kept)
     else:
         pilot = documents.doc_pilot_report([b for b in specs if documents.is_doc_spec(b)], ingest, ingested,
                                            survivors, kept)

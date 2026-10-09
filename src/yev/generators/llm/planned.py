@@ -6,8 +6,9 @@ each with options and a gold fixed in code. Writers get the scene, each state's 
 options, never the golds, and return one line per state: {"gid", "sid", "state"}.
 
 Run layout (same as a document run, so check-prepare, check-score, nodoc-* and diff-* run unchanged):
-  batches/planned-batch-XXX.json       the plan, golds included (the writer prompt tells writers not to open it)
+  batches/planned-batch-XXX.json       gold-free spec (public_spec): batch_id, family, mode, tokens, output
   batches/planned-batch-XXX.prompt.md  the writer prompt; names the output file
+  private/plan/planned-batch-XXX.json  the full plan, golds included; writers are never pointed at private/
   written/planned-batch-XXX.jsonl      writer output (the batch's "output" field, relative to the run)
   ingested.jsonl, reports/ingest.json, reports/ingest-dropped.json   from synth planned-ingest
 check-score keeps groups with keep_groups (not documents.keep_docs) and writes final/synthetic_docs.jsonl.
@@ -24,12 +25,15 @@ from typing import Callable
 
 from yev.generators.common import SYNTH_LICENCE
 from yev.generators.llm import documents
+from yev.generators.llm.check import score_answers
 from yev.generators.llm.families import DOMAINS
 from yev.schema import Decision, Option, SchemaError
 
 SOURCE = "synthetic_planned"
 MODE = "planned"
 BATCH_PREFIX = "planned-batch-"
+PLAN_DIR = "private/plan"  # run-relative; the gold-bearing plans live here, never in batches/
+PUBLIC_KEYS = ("batch_id", "family", "mode", "tokens", "output")
 KEEP_SINGLE_SHARE = documents.KEEP_DOC_SHARE
 
 
@@ -69,6 +73,26 @@ class PlannedFamily:
 
 def is_planned_spec(spec: dict) -> bool:
     return spec.get("mode") == MODE
+
+
+def public_spec(batch: dict) -> dict:
+    """The gold-free part of a planned batch, written to batches/ beside the writer prompt."""
+    return {k: batch[k] for k in PUBLIC_KEYS}
+
+
+def plan_path(run: Path | str, batch_id: str) -> Path:
+    return Path(run) / PLAN_DIR / f"{batch_id}.json"
+
+
+def load_plans(run_dir: Path | str) -> list[dict]:
+    """Full plans (golds included) of a run's planned batches, in batch order; a batch without one is skipped."""
+    run = Path(run_dir)
+    out = []
+    for spec_path in sorted((run / "batches").glob("*.json")):
+        spec = json.loads(spec_path.read_text())
+        if is_planned_spec(spec) and plan_path(run, spec["batch_id"]).exists():
+            out.append(json.loads(plan_path(run, spec["batch_id"]).read_text()))
+    return out
 
 
 # --- planning -------------------------------------------------------------------------------------
@@ -244,9 +268,13 @@ def ingest_planned(run_dir: Path | str, count: Callable[[str], int] | None = Non
     rows: list[Decision] = []
     seen: set[tuple[str, str]] = set()
     for spec_path in sorted((run / "batches").glob("*.json")):
-        batch = json.loads(spec_path.read_text())
-        if not is_planned_spec(batch):
+        spec = json.loads(spec_path.read_text())
+        if not is_planned_spec(spec):
             continue
+        if not plan_path(run, spec["batch_id"]).exists():
+            stats["missing_plan"] += 1
+            continue
+        batch = json.loads(plan_path(run, spec["batch_id"]).read_text())
         plan = {(g["gid"], s["sid"]): (g, s) for g in batch["groups"] for s in g["states"]}
         stats["states_planned"] += len(plan)
         stats["groups_planned"] += len(batch["groups"])
@@ -297,24 +325,20 @@ def ingest_planned(run_dir: Path | str, count: Callable[[str], int] | None = Non
 # --- check scoring --------------------------------------------------------------------------------
 
 def keep_groups(survivors: list[Decision], ingested: list[Decision]) -> list[Decision]:
-    """Contrastive groups (2+ planned states) keep nothing unless every ingested question survived the check;
-    single-state groups keep their survivors if they are at least KEEP_SINGLE_SHARE (70%) of the questions
-    planned for the group (metadata questions_written)."""
-    n_ingested = Counter(d.cluster_id for d in ingested)
+    """Judged against the plan (metadata questions_written = every state x question planned for the group).
+    Contrastive groups (2+ planned states) keep nothing unless every planned question survived, so a group that
+    lost a state at ingest or a question at the check is dropped whole. Single-state groups keep their survivors
+    if they are at least KEEP_SINGLE_SHARE (70%) of the planned questions."""
     info = {d.cluster_id: d.metadata or {} for d in ingested}
     alive = Counter(d.cluster_id for d in survivors)
-
-    def states(cid: str) -> int:
-        m = info.get(cid, {})
-        return m.get("states_planned") or len({x.metadata.get("sid") for x in ingested if x.cluster_id == cid})
-
     keep = set()
-    for cid in alive:
-        if states(cid) >= 2:
-            ok = alive[cid] == n_ingested[cid]
+    for cid, n in alive.items():
+        m = info.get(cid, {})
+        planned_q = m["questions_written"]
+        if m.get("states_planned", 1) >= 2:
+            ok = n == planned_q
         else:
-            written = info.get(cid, {}).get("questions_written") or n_ingested[cid]
-            ok = alive[cid] >= KEEP_SINGLE_SHARE * written - 1e-9
+            ok = n >= KEEP_SINGLE_SHARE * planned_q - 1e-9
         if ok:
             keep.add(cid)
     return [d for d in survivors if d.cluster_id in keep]
@@ -323,8 +347,6 @@ def keep_groups(survivors: list[Decision], ingested: list[Decision]) -> list[Dec
 def score_planned_answers(ingested: list[Decision], key: dict, answers: list[dict],
                           survivors_out: list | None = None) -> tuple[list[Decision], Counter]:
     """Blind-check votes per question, then keep_groups."""
-    from yev.generators.llm.check import score_answers
-
     survivors, stats = score_answers(ingested, key, answers, cluster_filter=None)
     if survivors_out is not None:
         survivors_out.extend(survivors)
@@ -352,7 +374,7 @@ def planned_pilot_report(specs: list[dict], ingest: dict, ingested: list[Decisio
         "ingested_states": ingest.get("states_kept", 0),
         "ingest_drop_reasons": {k: ingest[k] for k in ("bad_shape", "unknown_state", "duplicate_state",
                                                        "empty_state", "too_short", "too_long", "missing_file",
-                                                       "bad_json") if ingest.get(k)},
+                                                       "missing_plan", "bad_json") if ingest.get(k)},
         "questions_ingested": len(ingested),
         "questions_survived_check": len(survivors),
         "question_survival_rate": round(len(survivors) / max(len(ingested), 1), 4),
