@@ -205,7 +205,7 @@ def test_persona_broken_names_one_slip_and_extra_rule_kept():
         kinds[kind] += 1
         if kind == "era":
             asks = g["scene"].split("in this order: ", 1)[1]
-            assert not any(w in asks for w in ("email", "mailing list", "online")), asks
+            assert not any(w in asks for w in ("email", "mailing list", "online", "gift vouchers", "step-free")), asks
         assert kind in ("persona", "reading_level", "era", "code_style", "reply_format")
         if extra:
             assert kind not in extra[0][2]
@@ -244,3 +244,58 @@ def test_writer_prompts_render():
         p = writer_prompt(b, "/tmp/x.jsonl")
         assert "gold" not in p.lower() and "{" not in p.split("## Output format")[0]
         assert "Operator policy:" in PLANNED_FAMILIES[name].state_format
+
+
+def test_era_groups_use_whitelisted_domains_only():
+    from yev.generators.llm.families import DOMAINS
+    assert set(scenes.ERA_DOMAINS) <= set(DOMAINS)
+    seen = Counter()
+    for g in _groups("persona_style_rule", 2000, seed=8):
+        if g["states"][0]["questions"][0]["skill"] != "style_era":
+            continue
+        domain = re.search(r"a costumed guide for the (.+?)'s heritage open day", g["scene"]).group(1)
+        assert domain in scenes.ERA_DOMAINS, domain
+        assert g["scene"].startswith(conv.an(domain, start=True) + ". ")
+        seen[domain] += 1
+    assert len(seen) >= len(scenes.ERA_DOMAINS) - 2
+
+
+def test_code_style_rules_state_their_scope():
+    for v in scenes.STYLE_RULES:
+        if v["kind"] != "code_style":
+            continue
+        rule, kept = v["rule"], v["kept"]
+        if "binds" in rule or "assign" in rule:
+            assert "a for-loop target, a with ... as name and tuple unpacking each count" in rule
+            assert "comprehensions are not used" in rule
+            assert "for-loop targets, with ... as names and tuple unpacking included" in kept
+            assert "no comprehension" in kept
+        if "nest" in rule:
+            assert "every for-loop, while-loop and comprehension counts as one level" in rule
+            assert "counting every for-loop, while-loop and comprehension as one level" in kept
+
+
+def test_style_wording_fixes():
+    bullets = next(v for v in scenes.STYLE_RULES if "bulleted" in v["rule"])
+    assert 'line after the "Assistant:" label' in bullets["rule"] and 'line after "Assistant:"' in bullets["kept"]
+    persona = next(v for v in scenes.STYLE_RULES if v["kind"] == "persona")
+    assert "joke" not in persona["kept"] and "not required" in persona["rule"]
+
+
+def test_disclosure_names_and_confirm_phrasing():
+    for g in _groups("disclosure_gate", 1000, seed=9):
+        colleague = re.search(r"The conversation is about (.+?), the ", g["scene"]).group(1)
+        parts = set(colleague.split(" ", 1))
+        for s in g["states"]:
+            m = re.match(r"The user (?:is|says they are) (.+?), ", s["brief"])
+            if s["sid"].startswith("self_"):
+                assert m.group(1) == colleague
+            else:
+                assert not set(m.group(1).split(" ", 1)) & parts, (m.group(1), colleague)
+        if "asks the assistant to confirm it" in g["scene"]:
+            claim = re.search(r"the user says they think .+? (is at .+? right now|sits at .+?) and asks", g["scene"])
+            assert claim, g["scene"]
+            text = claim.group(1)
+            assert "," not in text and not re.search(r"at (meeting room|a client visit)", text), text
+            if text.startswith("sits at"):
+                assert re.fullmatch(r"sits at desk \d\.\d\d in the \w+ wing", text), text

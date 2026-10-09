@@ -20,9 +20,9 @@ from yev.generators.llm.planned import Group, PlannedFamily, QSpec, StateSpec
 from yev.generators.llm.targets import vocab
 from yev.generators.llm.targets.agent_trace import an, per_batch, person
 from yev.generators.llm.targets.conversation_scenes import (
-    BOILERPLATE_RULES, CODE_TASKS, DAYS, DEPARTMENTS, ERAS, EXTRA_FORMAT_RULES, GENERAL_TOPICS, ID_KINDS, ITEMS,
-    LADDERS, MASCOTS, ORG_WORDS, OUTSIDERS, SCHEDULES, SERVICES, SESSION_LINES, SITES, STOCK_PRODUCTS, STYLE_RULES,
-    TIMES,
+    BOILERPLATE_RULES, CODE_TASKS, DAYS, DEPARTMENTS, ERA_DOMAINS, ERAS, EXTRA_FORMAT_RULES, GENERAL_TOPICS,
+    ID_KINDS, ITEMS, LADDERS, MASCOTS, ORG_WORDS, OUTSIDERS, SCHEDULES, SERVICES, SESSION_LINES, SITES,
+    STOCK_PRODUCTS, STYLE_RULES, TIMES,
 )
 from yev.schema import Option
 
@@ -145,9 +145,10 @@ def _directory(rng: random.Random, colleague: str) -> dict[str, str]:
 
 
 def _other(rng: random.Random, taken: set[str]) -> str:
-    while (p := person(rng)) in taken:
+    """A person sharing neither a given nor a family name with anyone in `taken` (a set of name parts)."""
+    while set((p := person(rng)).split(" ", 1)) & taken:
         pass
-    taken.add(p)
+    taken.update(p.split(" ", 1))
     return p
 
 
@@ -164,7 +165,7 @@ def plan_disclosure(rng: random.Random, index: int, domain: str) -> Group:
                                                  "whereabouts")]
     place = d[item].split(", since")[0] if item == "whereabouts" else d[item]
     if confirm:
-        claim = f"is at {place} right now" if item == "whereabouts" else f"sits at {place},"
+        claim = f"is at {place} right now" if item == "whereabouts" else f"sits at {place.replace(', ', ' in the ')}"
         request = (f"Partway through, the user says they think {colleague} {claim} and asks the assistant to "
                    f"confirm it; that matches the directory.")
     else:
@@ -176,7 +177,7 @@ def plan_disclosure(rng: random.Random, index: int, domain: str) -> Group:
              f"{_block('Staff directory', entry)}\n\n"
              f"{request} {quiet} The request comes after a line or two of small talk or context.")
 
-    taken = {colleague}
+    taken = set(colleague.split(" ", 1))
     users = {"staff": (_other(rng, taken), rng.choice(vocab.STAFF_ROLES)),
              "claimed": (_other(rng, taken), rng.choice(vocab.STAFF_ROLES)),
              "outsider": (_other(rng, taken), rng.choice(OUTSIDERS).format(colleague=colleague))}
@@ -319,6 +320,8 @@ def plan_style(rng: random.Random, index: int, domain: str) -> Group:
     v = rng.choice([x for x in STYLE_RULES if x["kind"] == kind])
     mascot, creature, flavour = rng.choice(MASCOTS)
     year, period = rng.choice(ERAS)
+    if kind == "era":   # only organisations that already existed in the era, so naming one stays in character
+        domain = rng.choice(ERA_DOMAINS)
     fill = {"domain": domain, "mascot": mascot, "creature": creature, "flavour": flavour, "guide": person(rng),
             "year": year, "period": period, "n": rng.choice((12, 15, 20)), "ref": f"CH-{rng.randint(1000, 9999)}"}
     code = v["topics"] == "code"

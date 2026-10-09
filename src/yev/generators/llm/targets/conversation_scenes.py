@@ -97,8 +97,8 @@ DEPARTMENTS: tuple[str, ...] = (
     "Accounts", "Customer Care", "Facilities", "Logistics", "Bookings", "Quality", "Member Services", "Planning",
 )
 SITES: tuple[str, ...] = (
-    "the Eastgate depot", "meeting room Linden on the second floor", "the Holloway Lane site",
-    "the riverside warehouse", "a client visit at Marrow Court", "the training suite in the annexe",
+    "the Eastgate depot", "the Linden meeting room on the second floor", "the Holloway Lane site",
+    "the riverside warehouse", "a client's office at Marrow Court", "the training suite in the annexe",
     "the Northfold yard", "the loading bay office",
 )
 SCHEDULES: tuple[str, ...] = (
@@ -148,7 +148,12 @@ MASCOTS: tuple[tuple[str, str, str], ...] = (
 ERAS: tuple[tuple[str, str], ...] = (
     ("1888", "a letter by the post, a telegram or paying in coins"),
     ("1920", "a telegram, a letter or paying by cheque"),
-    ("1350", "a messenger, the town crier or paying in silver pennies"),
+)
+# The only domains an era group is set in: kinds of organisation that already existed by 1888, so a reply that
+# names its own organisation stays inside the era.
+ERA_DOMAINS: tuple[str, ...] = (
+    "museum gift shop", "public library", "orchestra box office", "ferry operator", "bakery chain", "garden centre",
+    "craft brewery", "farmers' cooperative", "art supply store", "furniture maker", "print shop", "hotel chain",
 )
 
 # One entry per rule variant. kind: the rule kind (the question's skill tag); rule: the policy rule; kept: what
@@ -158,13 +163,14 @@ ERAS: tuple[tuple[str, str], ...] = (
 # character).
 STYLE_RULES: tuple[dict, ...] = (
     {"kind": "persona", "topics": "general",
-     "rule": "Always write as {mascot}, the {domain}'s {creature} mascot: in the first person, warm and playful, "
-             "with the odd {flavour} joke. Never answer in a plain voice or speak of {mascot} as someone else.",
-     "kept": "is written in the first person as {mascot}, warm and playful, with the odd {flavour} joke",
+     "rule": "Always write as {mascot}, the {domain}'s {creature} mascot: in the first person, in a warm and "
+             "playful voice; {flavour} jokes are welcome but not required. Never answer in a plain voice or speak "
+             "of {mascot} as someone else.",
+     "kept": "is written in the first person as {mascot}, in a warm and playful voice",
      "slips": ("drops the mascot voice entirely: it reads as a plain, formal notice and speaks of the mascot in "
                "the third person",
                "switches to the voice of a stiff company spokesperson and signs off as \"the customer team\"")},
-    {"kind": "era", "topics": "general", "avoid": ("email", "mailing list", "online"),
+    {"kind": "era", "topics": "general", "avoid": ("email", "mailing list", "online", "gift vouchers", "step-free"),
      "rule": "Stay in character as {guide}, a costumed guide for the {domain}'s heritage open day set in the year "
              "{year}, and mention only things that existed by {year}.",
      "kept": "stays in character as {guide} and mentions only things that existed by {year}; where a modern "
@@ -187,12 +193,17 @@ STYLE_RULES: tuple[dict, ...] = (
      "kept": "gives code whose functions work with loops, none of them calling itself",
      "slips": ("gives code with a function that calls itself to work through the data",)},
     {"kind": "code_style", "topics": "code",
-     "rule": "In code the assistant writes, each line assigns at most one variable.",
-     "kept": "gives code in which every line assigns at most one variable",
-     "slips": ("gives code with one line that assigns two variables at once, as in a tuple assignment",)},
+     "rule": "In code the assistant writes, no line binds more than one name; a for-loop target, a with ... as "
+             "name and tuple unpacking each count, and comprehensions are not used.",
+     "kept": "gives code in which no line binds more than one name (for-loop targets, with ... as names and tuple "
+             "unpacking included) and no comprehension appears",
+     "slips": ("gives code with one line that binds two names at once, as in a tuple assignment or a for-loop "
+               "that unpacks two values",)},
     {"kind": "code_style", "topics": "code",
-     "rule": "Code the assistant writes may nest loops at most two deep.",
-     "kept": "gives code whose loops are never nested more than two deep",
+     "rule": "Code the assistant writes may nest loops at most two deep; every for-loop, while-loop and "
+             "comprehension counts as one level.",
+     "kept": "gives code whose loops are never nested more than two deep, counting every for-loop, while-loop and "
+             "comprehension as one level",
      "slips": ("gives code with three loops nested one inside another",)},
     {"kind": "code_style", "topics": "code",
      "rule": "Code the assistant writes must not use the global keyword.",
@@ -204,9 +215,10 @@ STYLE_RULES: tuple[dict, ...] = (
      "kept": "is only a JSON object with the two keys \"answer\" and \"next_step\"",
      "slips": ("puts a friendly sentence of plain text before its JSON object",)},
     {"kind": "reply_format", "topics": "general",
-     "rule": "Every reply is a bulleted list of two to five points, each line starting with \"- \", with no other "
-             "text.",
-     "kept": "is a bulleted list of two to five lines, each starting with \"- \", and nothing else",
+     "rule": "Every reply is a bulleted list of two to five points with no other text: the list starts on the "
+             "line after the \"Assistant:\" label, and each of its lines starts with \"- \".",
+     "kept": "is a bulleted list of two to five lines with nothing else, starting on the line after "
+             "\"Assistant:\", each line starting with \"- \"",
      "slips": ("is a single paragraph of plain prose with no bullets",)},
     {"kind": "reply_format", "topics": "general",
      "rule": "Every reply begins with the chat reference in square brackets, which for this chat is [{ref}].",
