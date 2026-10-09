@@ -41,3 +41,30 @@ INTERNAL_SYSTEMS: tuple[str, ...] = (
     "Larkspur CRM", "Tidewell Billing", "Copperline Rota", "Brambleworks Inventory", "Quillstone Ticketing",
     "Marrowgate Payroll", "Fernhollow Records", "Sablecrest Dispatch",
 )
+
+# Given and family names for the people in scenes (combined at random, so pairs are unlikely to repeat).
+GIVEN_NAMES: tuple[str, ...] = (
+    "Orlaith", "Teodric", "Mireya", "Kasimir", "Ysolde", "Bastiaan", "Femke", "Ludovica", "Anselm", "Rosalind",
+    "Ibrahima", "Wenna", "Callum", "Thandeka", "Ottilie", "Ravindra", "Saoirse", "Joaquin", "Henrike", "Dmitra",
+    "Ezekiel", "Linnea", "Matthias", "Noor", "Peregrine", "Ximena", "Corentin", "Aiyana",
+)
+FAMILY_NAMES: tuple[str, ...] = (
+    "Quellmoor", "Ashgrove-Pike", "Vantreece", "Dellacombe", "Okonkwo-Hale", "Brightwater", "Szalankiewicz",
+    "Moravec", "Tenneby", "Halloran-Voss", "Fairbairn", "Lindqvist-Ross", "Marchetti", "Pennywhistle",
+    "Abernathy-Soto", "Kettleburn", "Ravensworth", "Oyelaran", "Castellane", "Duquesne-Park",
+)
+
+# Names of the AI assistants that run in agent logs.
+ASSISTANT_NAMES: tuple[str, ...] = (
+    "Tallyhand", "Quirebot", "Ferrous", "Lanternly", "Mosswick", "Copperjot", "Pallet Pal", "Driftmark",
+    "Inkling Ops", "Beacon Clerk",
+)
+
+# Outside (non-company) mail domains and mailbox names for addresses planted in agent logs.
+OUTSIDE_MAIL_DOMAINS: tuple[str, ...] = (
+    "quillmarsh.net", "bevelroad-mail.com", "tinwhistle-post.org", "harrowlane.biz", "glasswren.co",
+    "ochrefield-inbox.net", "mintpylon.com", "saltmeadow.email",
+)
+OUTSIDE_MAILBOXES: tuple[str, ...] = (
+    "relay.desk", "intake-team", "sync.helper7", "records.drop", "ops-handover", "audit.mailbox", "backup.collect",
+)
