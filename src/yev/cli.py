@@ -25,6 +25,7 @@ from yev.filters.shortcut import run_shortcut
 from yev.mix import build_mix, write_mix
 from yev.generators import padding
 from yev.generators import actions, drills, invoices, many_options, returns, returns_v2, scales, severity
+from yev.generators import agent_triples, invoice_actions, policy_counts
 from yev.generators.common import EDIT_TYPES
 from yev.generators.llm.attrib import prepare_pairs, render_attrib_prompt, score_attribution
 from yev.generators.llm import documents, planned
@@ -107,7 +108,9 @@ def cmd_dev(args: argparse.Namespace) -> int:
 RULE_GENERATORS = {"returns": returns.generate, "actions": actions.generate, "severity": severity.generate,
                    "returns_v2": returns_v2.generate, "date_number_drills": drills.generate,
                    "numbered_scales": scales.generate, "many_options": many_options.generate,
-                   "invoice_ledger": invoices.generate}
+                   "invoice_ledger": invoices.generate, "policy_counts": policy_counts.generate,
+                   "payment_terms": invoice_actions.generate_payment_terms,
+                   "invoice_action": invoice_actions.generate_invoice_action, "agent_triples": agent_triples.generate}
 
 
 def cmd_gen_rules(args: argparse.Namespace) -> int:
