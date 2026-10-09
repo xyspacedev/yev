@@ -232,13 +232,13 @@ def _spec(name: str, hf_id: str, convert, pool_size: int, **kw) -> SourceSpec:
                       max_state_chars=MAX_STATE_CHARS, token_window=TOKEN_WINDOW, **kw)
 
 
-# Pool sizes sum to the family cap of 3,000.
+# Pool sizes total 3,600 for a 3,000-row family block (qasper cap 400 -> 1,000; the sampler is prefix-stable).
 SOURCES: dict[str, SourceSpec] = {
     "cuad": _spec("cuad", "theatticusproject/cuad-qa", convert_cuad, 1500, config="default",
                   revision="d9c4ee0250ae2eb97bdb5b50773ab14ea62d0631", prepare=prepare_cuad),
     "maud": _spec("maud", "theatticusproject/maud", convert_maud, 1100,
                   revision="37d5c3b95d18dcd8404cc5ce3fd5069be062392f", data_files="MAUD_v1/MAUD_train.csv",
                   prepare=prepare_maud),
-    "qasper": _spec("qasper", "allenai/qasper", convert_qasper, 400,
+    "qasper": _spec("qasper", "allenai/qasper", convert_qasper, 1000,
                     revision="06806e4608976fc2fac0a090ac425d5b2b29caf4", data_files="qasper/train/0000.parquet"),
 }

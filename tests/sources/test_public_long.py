@@ -174,6 +174,24 @@ def test_convert_qasper_keeps_agreed_yes_no_and_yes_no_shaped_unanswerable():
         valid(d)
 
 
+def test_qasper_prefix_stable():
+    """Raising the qasper cap 400 -> 1,000 must leave the first 400 converted rows unchanged."""
+    assert pl.SOURCES["qasper"].pool_size == 1000
+    kinds = [(True, "yes"), (False, "no"), (None, "not_stated")]
+    rows = []
+    for k in range(1500):
+        yn, _ = kinds[k % 3]
+        a = ans(unanswerable=True, evidence=()) if yn is None else ans(yn)
+        row = qasper_row([(f"Is claim {k} true?", [a])])
+        row["id"] = f"p{k}"
+        rows.append(row)
+    base = replace(pl.SOURCES["qasper"], token_window=None)
+    old, _ = build(replace(base, pool_size=400), rows, seed=0)
+    new, _ = build(replace(base, pool_size=1000), rows, seed=0)
+    assert len(old) == 400 and len(new) == 1000
+    assert new[:400] == old
+
+
 # --- length window and specs ------------------------------------------------------------------------
 
 def _doc_convert(row, i, rng, labels):
@@ -195,7 +213,7 @@ def test_build_applies_token_window_and_counts_drops():
 
 def test_sources_are_licence_clean_pinned_and_capped():
     assert set(pl.SOURCES) == {"cuad", "maud", "qasper"}
-    assert sum(s.pool_size for s in pl.SOURCES.values()) <= 3000
+    assert sum(s.pool_size for s in pl.SOURCES.values()) >= 3000  # the block draws its 3,000 rows from this pool
     for name, s in pl.SOURCES.items():
         assert s.name == name and licences.is_allowed(s.licence) and s.revision and s.split == "train"
         licences.check(s.hf_id, s.licence, config=s.config, split=s.split, data_files=s.data_files)

@@ -1,0 +1,455 @@
+{
+  "name": "stage1c",
+  "seed": 0,
+  "examples_rate": 0.35,
+  "examples_exclude_families": [
+    "invoice_ledger",
+    "long_workflow",
+    "long_padding",
+    "public_long",
+    "trace_audit",
+    "invoice_line",
+    "policy_amendment"
+  ],
+  "blocks": [
+    {
+      "name": "evidence_vitaminc",
+      "files": [
+        "data/stage0-pool/vitaminc.jsonl"
+      ],
+      "rows": 2500
+    },
+    {
+      "name": "evidence_wanli",
+      "files": [
+        "data/stage0-pool/wanli.jsonl"
+      ],
+      "rows": 1000
+    },
+    {
+      "name": "evidence_mnli_snli_neg",
+      "files": [
+        "data/stage0-pool/multi_nli.jsonl",
+        "data/stage0-pool/snli_cf.jsonl",
+        "data/stage0-pool/negation.jsonl"
+      ],
+      "rows": 1500
+    },
+    {
+      "name": "moderation_dynabench",
+      "files": [
+        "data/stage0-pool/dynabench.jsonl"
+      ],
+      "rows": 2500
+    },
+    {
+      "name": "moderation_aegis_civil",
+      "files": [
+        "data/stage0-pool/aegis.jsonl",
+        "data/stage0-pool/civil_comments.jsonl"
+      ],
+      "rows": 1500
+    },
+    {
+      "name": "action_review",
+      "files": [
+        "data/stage0-pool/agent_actions.jsonl"
+      ],
+      "rows": 2500
+    },
+    {
+      "name": "rules",
+      "files": [
+        "data/stage0-pool/eikos.jsonl",
+        "data/stage0-pool/ruletaker.jsonl"
+      ],
+      "rows": 2500
+    },
+    {
+      "name": "intent",
+      "files": [
+        "data/stage0-pool/banking77.jsonl",
+        "data/stage0-pool/clinc150.jsonl"
+      ],
+      "rows": 2000
+    },
+    {
+      "name": "fast_decisions",
+      "files": [
+        "data/stage0-pool/fastdec_*.jsonl"
+      ],
+      "rows": 1500
+    },
+    {
+      "name": "triage",
+      "files": [
+        "data/stage0-pool/cvss.jsonl",
+        "data/stage0-pool/it_support.jsonl",
+        "data/stage0-pool/help_desk.jsonl"
+      ],
+      "rows": 1000
+    },
+    {
+      "name": "sentiment",
+      "files": [
+        "data/stage0-pool/go_emotions.jsonl"
+      ],
+      "rows": 500
+    },
+    {
+      "name": "replay",
+      "files": [
+        "data/stage0-pool/boolq.jsonl",
+        "data/stage0-pool/arc_challenge.jsonl",
+        "data/stage0-pool/arc_easy.jsonl",
+        "data/stage0-pool/csqa.jsonl"
+      ],
+      "rows": 1000
+    },
+    {
+      "name": "skill_atlas",
+      "files": [
+        "data/stage0-pool/skill_atlas.jsonl"
+      ],
+      "rows": 5000,
+      "dev_share": 0.05,
+      "repeat": 0.5,
+      "repeat_filter": {
+        "family": [
+          "skill_filing"
+        ]
+      }
+    },
+    {
+      "name": "synthetic_rules",
+      "files": [
+        "data/stage0-pool/synthetic_rules.jsonl"
+      ],
+      "rows": 10000,
+      "dev_share": 0.05
+    },
+    {
+      "name": "synthetic_opus",
+      "files": [
+        "data/stage0-pool/synthetic_opus.jsonl"
+      ],
+      "rows": 10000,
+      "dev_share": 0.05,
+      "repeat": 2,
+      "repeat_filter": {
+        "family": [
+          "moderation",
+          "routing",
+          "returns"
+        ]
+      },
+      "repeat_extra": [
+        {
+          "repeat": 1,
+          "repeat_filter": {
+            "family": [
+              "access_request",
+              "agent_action",
+              "claim_evidence",
+              "expenses",
+              "intent",
+              "severity",
+              "sentiment"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "invoice_ledger",
+      "files": [
+        "data/stage1b-pool/invoice_ledger.jsonl"
+      ],
+      "rows": 3000,
+      "dev_share": 0.05,
+      "dev_min_rows": 100,
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50
+    },
+    {
+      "name": "numbered_scales",
+      "files": [
+        "data/stage1b-pool/numbered_scales.jsonl"
+      ],
+      "rows": 2500,
+      "dev_share": 0.05,
+      "dev_min_rows": 100,
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50,
+      "exclude_from": [
+        "synthetic_rules"
+      ]
+    },
+    {
+      "name": "many_options",
+      "files": [
+        "data/stage1b-pool/many_options.jsonl"
+      ],
+      "rows": 1500,
+      "dev_share": 0.05,
+      "dev_min_rows": 100,
+      "report_gold": true,
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50
+    },
+    {
+      "name": "many_options_intent",
+      "files": [
+        "data/stage1b-pool/many_options_intent.jsonl"
+      ],
+      "rows": 1500,
+      "dev_share": 0.05,
+      "dev_min_rows": 100,
+      "exclude_from": [
+        "intent"
+      ],
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50
+    },
+    {
+      "name": "long_workflow",
+      "files": [
+        "data/stage1b-pool/long_workflow.jsonl",
+        "data/stage1c-pool/long_workflow_more.jsonl"
+      ],
+      "rows": 4000,
+      "dev_share": 0.05,
+      "dev_min_rows": 100,
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50
+    },
+    {
+      "name": "long_padding",
+      "files": [
+        "data/stage1b-pool/long_padding.jsonl"
+      ],
+      "rows": 3000,
+      "dev_share": 0.05,
+      "dev_min_rows": 100,
+      "split_follows": [
+        "evidence_vitaminc",
+        "evidence_wanli",
+        "evidence_mnli_snli_neg",
+        "moderation_dynabench",
+        "moderation_aegis_civil",
+        "action_review",
+        "rules",
+        "intent",
+        "fast_decisions",
+        "triage",
+        "sentiment",
+        "replay",
+        "skill_atlas",
+        "synthetic_rules",
+        "synthetic_opus",
+        "numbered_scales",
+        "many_options",
+        "many_options_intent"
+      ],
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50
+    },
+    {
+      "name": "public_long",
+      "files": [
+        "data/stage1c-pool/public_long.jsonl"
+      ],
+      "rows": 3000,
+      "dev_share": 0.05,
+      "dev_min_rows": 100,
+      "calibration_share": 0.03,
+      "calibration_min_rows": 50
+    },
+    {
+      "name": "agent_injection_pair",
+      "files": [
+        "data/stage1c-pool/agent_injection_pair.jsonl"
+      ],
+      "rows": 2400,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "agent_overreach",
+      "files": [
+        "data/stage1c-pool/agent_overreach.jsonl",
+        "data/stage1c-pool/agent_overreach_rules.jsonl"
+      ],
+      "rows": 1600,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "agent_benign_multistep",
+      "files": [
+        "data/stage1c-pool/agent_benign_multistep.jsonl"
+      ],
+      "rows": 1000,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "trace_audit",
+      "files": [
+        "data/stage1c-pool/trace_audit.jsonl"
+      ],
+      "rows": 1000,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "disclosure_gate",
+      "files": [
+        "data/stage1c-pool/disclosure_gate.jsonl"
+      ],
+      "rows": 1620,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "grounded_offer",
+      "files": [
+        "data/stage1c-pool/grounded_offer.jsonl"
+      ],
+      "rows": 1000,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "persona_style_rule",
+      "files": [
+        "data/stage1c-pool/persona_style_rule.jsonl"
+      ],
+      "rows": 900,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "count_threshold_rule",
+      "files": [
+        "data/stage1c-pool/count_threshold_rule.jsonl"
+      ],
+      "rows": 1000,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "judge_planted_error",
+      "files": [
+        "data/stage1c-pool/judge_planted_error.jsonl"
+      ],
+      "rows": 1200,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "planted_note",
+      "files": [
+        "data/stage1c-pool/planted_note.jsonl"
+      ],
+      "rows": 1200,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "policy_amendment",
+      "files": [
+        "data/stage1c-pool/policy_amendment.jsonl"
+      ],
+      "rows": 1110,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "invoice_line",
+      "files": [
+        "data/stage1c-pool/invoice_line.jsonl"
+      ],
+      "rows": 1800,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "payment_terms",
+      "files": [
+        "data/stage1c-pool/payment_terms.jsonl"
+      ],
+      "rows": 400,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "invoice_action",
+      "files": [
+        "data/stage1c-pool/invoice_action.jsonl"
+      ],
+      "rows": 1300,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "cs_scales_actions",
+      "files": [
+        "data/stage1c-pool/cs_scales_actions.jsonl"
+      ],
+      "rows": 1800,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    },
+    {
+      "name": "security_context",
+      "files": [
+        "data/stage1c-pool/security_context.jsonl"
+      ],
+      "rows": 1700,
+      "dev_share": 0.05,
+      "dev_min_rows": 60,
+      "calibration_share": 0.05,
+      "calibration_min_rows": 40
+    }
+  ],
+  "dev_files": [
+    "data/dev/decidebench_examples.jsonl"
+  ],
+  "calibration": {
+    "files": [
+      "data/public/natural_filtered/*.jsonl"
+    ],
+    "rows": 2000
+  }
+}
