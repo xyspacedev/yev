@@ -907,6 +907,13 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_export_merged(args) -> int:
+    from yev.serve.merge import export_merged
+    export_merged(args.model, args.base, args.out)
+    print(f"merged {args.model} into {args.base} -> {args.out}")
+    return 0
+
+
 def _eval_position_bias(args, temps: dict) -> int:
     """yev eval --shuffle-options K: re-ask each row with >= --min-options options in its original
     order and K seeded permutations; compare the per-key distributions (spec §5)."""
@@ -1272,6 +1279,11 @@ def make_parser() -> argparse.ArgumentParser:
                    help="shortest shared prompt prefix (tokens) that uses the prefix KV cache")
     p.add_argument("--model-name", default="yev-4b", help="model name reported in responses and /v1/models")
     p.set_defaults(func=cmd_serve)
+    p = sub.add_parser("export-merged", help="merge a LoRA adapter into its base (for vLLM/SGLang; local only)")
+    p.add_argument("--model", required=True, help="LoRA adapter dir")
+    p.add_argument("--base", required=True, help="base model dir")
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_export_merged)
     from yev.bench import BENCHES
     p = sub.add_parser("gate", help="Stage 1 publish-gate report (exit 1 unless PUBLISHABLE)")
     p.add_argument("--stage0-dev", help="yev eval report of the model on the Stage 0 dev set (accuracy)")
