@@ -22,6 +22,15 @@ yev serve --model runs/yev-4b/adapter --base /models/Qwen3.5-4B-Base \
 | `--batch-tokens` | `16384` | Token budget per forward batch when a request carries several questions |
 | `--no-prefix-cache` | cache on | Re-read the shared state for every question (the exact path; use to rule the cache out) |
 | `--min-prefix-tokens` | `256` | Shortest shared prompt prefix, in tokens, that uses the prefix KV cache |
+| `--backend` | `transformers` | `transformers` runs the model in process; `vllm` or `sglang` asks a sidecar engine (below) |
+| `--engine-url` | `http://127.0.0.1:8100` | The sidecar engine, for `--backend vllm` or `sglang` |
+
+**Backends.** With `--backend vllm` or `--backend sglang`, `yev serve` builds the same prompt token ids, length check
+and calibrated softmax, and asks a vLLM or SGLang server (started on merged weights by
+`scripts/aws/serve_engine.sh`) for each question's letter log-probs. `--model` is then the merged model dir from
+`yev export-merged`, used for the tokenizer only; `--batch-tokens` and the prefix-cache flags do not apply, since the
+engine batches and caches itself. Setup, parity and speed against the transformers backend are in
+[serving-backends.md](serving-backends.md).
 
 Other endpoints: `GET /health` (`{"status": "ok", "model": ...}`), `GET /v1/models`. No authentication is checked, so any
 `Authorization` header is accepted. Bind to loopback or put it behind your own proxy.
@@ -118,6 +127,7 @@ Shape example (tiny model):
 |---|---|---|
 | 422 | `{"error": {"type": "unsupported", "message": R, "reason": R}}` | The model cannot answer. A whole request is refused before any forward pass. |
 | 422 | `{"detail": [{"loc", "msg", "type"}], "error": {"type": "invalid_request", ...}}` | Malformed request (FastAPI validation: no questions, unknown question field, missing `criteria`) |
+| 503 | `{"error": {"type": "engine_unavailable", "message": "..."}}` | `--backend vllm`/`sglang` only: the engine is unreachable, timed out, returned non-200, or left out a letter's log-prob |
 | 500 | `{"error": {"type": "internal_error", "message": "ValueError: ..."}}` | A bug or a CUDA out-of-memory. Clients retry 5xx. |
 
 Refusal reasons (R) are worded to contain the phrases the Decision Index `http` engine recognises as "unsupported":

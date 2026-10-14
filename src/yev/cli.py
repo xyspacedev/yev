@@ -890,11 +890,19 @@ def cmd_serve(args) -> int:
     import uvicorn
 
     from yev.serve.app import create_app
-    from yev.serve.engine import Engine
+    if args.backend == "transformers":
+        from yev.serve.engine import Engine
+        engine = Engine(args.model, args.base, args.calibration, max_len=args.max_len,
+                        batch_tokens=args.batch_tokens, prefix_cache=args.prefix_cache,
+                        min_prefix_tokens=args.min_prefix_tokens)
+    else:
+        from transformers import AutoTokenizer
 
-    engine = Engine(args.model, args.base, args.calibration, max_len=args.max_len,
-                    batch_tokens=args.batch_tokens, prefix_cache=args.prefix_cache,
-                    min_prefix_tokens=args.min_prefix_tokens)
+        from yev.serve.backends import make_backend
+        from yev.serve.remote import RemoteEngine
+        tok = AutoTokenizer.from_pretrained(args.base or args.model)
+        engine = RemoteEngine(tok, make_backend(args.backend, args.engine_url), args.calibration,
+                              max_len=args.max_len)
     uvicorn.run(create_app(engine, model_name=args.model_name), host=args.host, port=args.port)
     return 0
 
@@ -1247,9 +1255,13 @@ def make_parser() -> argparse.ArgumentParser:
             p.add_argument("--seed", type=int, default=0, help="seed of the option permutations")
         p.set_defaults(func=func)
     p = sub.add_parser("serve", help="serve the model behind TypeSafe's POST /v1/systemone (needs the serve extra)")
-    p.add_argument("--model", required=True, help="LoRA adapter dir or full model dir")
+    p.add_argument("--model", required=True,
+                   help="LoRA adapter dir or full model dir (with a sidecar: the merged dir, for the tokenizer)")
     p.add_argument("--base", help="base model path (required for adapters; tokenizer source)")
     p.add_argument("--calibration", help="calibration JSON from yev calibrate (default T=1)")
+    p.add_argument("--backend", choices=["transformers", "vllm", "sglang"], default="transformers",
+                   help="transformers runs the model in process; vllm/sglang ask a sidecar at --engine-url")
+    p.add_argument("--engine-url", default="http://127.0.0.1:8100", help="the vllm/sglang sidecar")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--max-len", type=int, default=16384, help="requests with a longer prompt are refused (422)")
