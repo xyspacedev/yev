@@ -4,8 +4,10 @@
     python scripts/bench_backends.py replay --url http://127.0.0.1:8000 --label vllm --gpu-mem \\
         --data data/mix/stage1c/dev.chat.jsonl --out replay_vllm.json
 
-grid: state ~300 / 2k / 8k tokens x 1 / 4 / 16 questions, 2 warm-up + 10 timed requests per cell, one at a time.
-replay: 500 dev requests (rows regrouped by state), seeded, at concurrency 1, 4, 16, 64.
+grid: state ~300 / 2k / 8k tokens x 1 / 4 / 16 questions, 2 warm-up + 10 timed requests per cell, one at a time;
+every request's state starts with its own line, so repeats can't be served from a cross-request prefix cache.
+replay: 500 dev requests (rows regrouped by state), seeded, at concurrency 1, 4, 16, 64; each level gets its own
+disjoint set of states and the warm-up uses two more, so no pass is timed on another pass's cached prefixes.
 """
 
 from __future__ import annotations
@@ -45,6 +47,11 @@ def grid_questions(n: int) -> dict:
     return out
 
 
+def grid_body(tokens: int, n_questions: int, i: int) -> dict:
+    """Request i of a grid cell: a state unique to i (so no repeat hits a sidecar's cross-request prefix cache)."""
+    return {"state": f"Request {i}.\n" + grid_state(tokens), "questions": grid_questions(n_questions)}
+
+
 def replay_requests(rows: list[dict], n: int, seed: int) -> list[dict]:
     by_state: dict[str, dict] = {}
     for r in rows:
@@ -56,6 +63,15 @@ def replay_requests(rows: list[dict], n: int, seed: int) -> list[dict]:
     reqs = list(by_state.values())
     random.Random(seed).shuffle(reqs)
     return reqs[:n]
+
+
+def replay_sets(rows: list[dict], n: int, seed: int, levels: int, warmup: int = 2) -> tuple[list[dict], list[list[dict]]]:
+    """Warm-up requests and one disjoint set of requests per concurrency level, so no pass reuses a state another
+    pass (or the warm-up) already put in a sidecar's prefix cache. With too few states, every set shrinks evenly."""
+    reqs = replay_requests(rows, len(rows), seed)
+    warm, rest = reqs[:warmup], reqs[warmup:]
+    per = min(n, len(rest) // levels)
+    return warm, [rest[k * per : (k + 1) * per] for k in range(levels)]
 
 
 def _p95(xs: list[float]) -> float:
@@ -105,22 +121,21 @@ async def run_grid(url: str) -> list[dict]:
     async with httpx.AsyncClient(timeout=600) as c:
         for tok in STATE_TOKENS:
             for nq in QUESTIONS:
-                body = {"state": grid_state(tok), "questions": grid_questions(nq)}
-                for _ in range(WARMUP):
-                    await _post(c, url, body)
-                ts = [await _post(c, url, body) for _ in range(TIMED)]
+                for i in range(WARMUP):
+                    await _post(c, url, grid_body(tok, nq, -1 - i))
+                ts = [await _post(c, url, grid_body(tok, nq, i)) for i in range(TIMED)]
                 out.append({"state_tokens": tok, "questions": nq, "p50_s": statistics.median(ts), "p95_s": _p95(ts),
                             "ms_per_question": 1000 * statistics.median(ts) / nq})
                 print(json.dumps(out[-1]))
     return out
 
 
-async def run_replay(url: str, reqs: list[dict], concurrency: int) -> dict:
+async def run_replay(url: str, warm: list[dict], reqs: list[dict], concurrency: int) -> dict:
     import httpx
     sem, lat = asyncio.Semaphore(concurrency), []
     async with httpx.AsyncClient(timeout=600, limits=httpx.Limits(max_connections=concurrency)) as c:
-        for body in reqs[:2]:
-            await _post(c, url, body)  # warm-up
+        for body in warm:
+            await _post(c, url, body)  # warm-up: requests outside the timed set
 
         async def one(body):
             async with sem:
@@ -152,9 +167,14 @@ def main(argv=None) -> int:
             result = {"grid": asyncio.run(run_grid(args.url))}
         else:
             rows = [json.loads(x) for x in Path(args.data).read_text().splitlines() if x.strip()]
-            reqs = replay_requests(rows, args.n, args.seed)
-            result = {"n_requests": len(reqs), "n_questions": sum(len(r["questions"]) for r in reqs),
-                      "replay": [asyncio.run(run_replay(args.url, reqs, int(k))) for k in args.concurrency.split(",")]}
+            levels = [int(k) for k in args.concurrency.split(",")]
+            warm, sets = replay_sets(rows, args.n, args.seed, len(levels))
+            if len(sets[0]) < args.n:
+                print(f"only {len(sets[0])} distinct requests per level (asked {args.n})")
+            result = {"n_requests_per_level": len(sets[0]),
+                      "replay": [{**asyncio.run(run_replay(args.url, warm, reqs, k)),
+                                  "n_questions": sum(len(r["questions"]) for r in reqs)}
+                                 for k, reqs in zip(levels, sets)]}
             for r in result["replay"]:
                 print(json.dumps(r))
     result.update({"label": args.label, "url": args.url, "peak_gpu_mib": gpu.peak})

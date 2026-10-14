@@ -42,3 +42,25 @@ def test_summarise():
     s = bb.summarise([1.0, 2.0, 3.0, 4.0], wall_s=2.0, n_questions=8)
     assert s["n"] == 4 and s["requests_per_s"] == 2.0 and s["questions_per_s"] == 4.0
     assert s["p50_s"] == pytest.approx(2.5) and s["p95_s"] == pytest.approx(3.85)
+
+
+def test_grid_bodies_have_unique_states_of_similar_length():
+    bodies = [bb.grid_body(2000, 4, i) for i in range(12)]
+    states = [b["state"] for b in bodies]
+    assert len(set(states)) == 12  # no cross-request prefix-cache hits between repeats
+    lens = [len(s.split()) for s in states]
+    assert max(lens) - min(lens) <= 2 and len(bodies[0]["questions"]) == 4
+
+
+def test_replay_sets_are_disjoint_per_level_and_warmup_is_separate():
+    rows = [dev_row(i, f"s{i}") for i in range(60)]
+    warm, sets = bb.replay_sets(rows, n=10, seed=0, levels=4, warmup=2)
+    states = [r["state"] for r in warm] + [r["state"] for s in sets for r in s]
+    assert len(warm) == 2 and [len(s) for s in sets] == [10, 10, 10, 10]
+    assert len(set(states)) == len(states)  # every request has a state no other pass has seen
+
+
+def test_replay_sets_shrink_evenly_when_states_run_out():
+    rows = [dev_row(i, f"s{i}") for i in range(22)]
+    warm, sets = bb.replay_sets(rows, n=10, seed=0, levels=4, warmup=2)
+    assert [len(s) for s in sets] == [5, 5, 5, 5]
