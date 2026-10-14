@@ -13,6 +13,9 @@ import asyncio
 import httpx
 
 TIMEOUT_S = 600.0
+# Sent explicitly so a model's generation_config.json (which engines apply by default) can't add a penalty: every
+# option letter is in the prompt, so a repetition penalty would rescale exactly the logits being read.
+NO_PENALTIES = {"repetition_penalty": 1.0, "frequency_penalty": 0, "presence_penalty": 0}
 
 
 class EngineError(Exception):
@@ -60,7 +63,8 @@ class VLLMBackend(_Backend):
 
     async def _one(self, prompt: list[int], letters: list[int]) -> list[float]:
         body = {"model": self.model, "prompt": prompt, "max_tokens": 1, "temperature": 0,
-                "allowed_token_ids": letters, "logprobs": len(letters), "return_tokens_as_token_ids": True}
+                "allowed_token_ids": letters, "logprobs": len(letters), "return_tokens_as_token_ids": True,
+                **NO_PENALTIES}
         data = await self._post("/v1/completions", body)
         try:
             top = data["choices"][0]["logprobs"]["top_logprobs"][0]
@@ -79,7 +83,7 @@ class SGLangBackend(_Backend):
     name = "sglang"
 
     async def _one(self, prompt: list[int], letters: list[int]) -> list[float]:
-        body = {"input_ids": prompt, "sampling_params": {"max_new_tokens": 1, "temperature": 0},
+        body = {"input_ids": prompt, "sampling_params": {"max_new_tokens": 1, "temperature": 0, **NO_PENALTIES},
                 "return_logprob": True, "token_ids_logprob": letters}
         data = await self._post("/generate", body)
         try:

@@ -18,3 +18,11 @@ def test_no_host_in_engine_scripts():
     for path in SCRIPTS:
         text = Path(path).read_text()
         assert "amazonaws" not in text and ".pem" not in text and "i-0" not in text
+
+
+def test_engines_ignore_model_generation_config_and_fit_max_len():
+    text = Path("scripts/aws/serve_engine.sh").read_text()
+    assert "--generation-config vllm" in text
+    # yev serve accepts prompts of up to --max-len (16384) tokens; vLLM needs prompt + 1 <= max_model_len
+    # and SGLang needs prompt < context_length, so the engines get one more.
+    assert 'MAXLEN="${MAXLEN:-16385}"' in text

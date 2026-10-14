@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Start a sidecar engine on 127.0.0.1:8100 for yev serve --backend vllm|sglang. Usage: serve_engine.sh vllm|sglang MODEL_DIR
+# MAXLEN is yev serve's --max-len (16384) plus one: vLLM needs prompt + 1 generated token <= max_model_len and SGLang
+# needs prompt < context_length, so a prompt yev accepts is never an engine 400 (a retried 503). yev's 422 stays the
+# only length refusal as long as yev serve --max-len < MAXLEN.
 set -euo pipefail
-NAME="$1"; MODEL="$2"; PORT="${PORT:-8100}"; MAXLEN="${MAXLEN:-16384}"
+NAME="$1"; MODEL="$2"; PORT="${PORT:-8100}"; MAXLEN="${MAXLEN:-16385}"
 case "$NAME" in
   vllm)
     FLAGS=(serve "$MODEL" --host 127.0.0.1 --port "$PORT" --served-model-name yev --dtype bfloat16
-           --max-model-len "$MAXLEN" --enable-prefix-caching --logprobs-mode processed_logprobs
+           --max-model-len "$MAXLEN" --enable-prefix-caching --generation-config vllm --logprobs-mode processed_logprobs
            --max-logprobs 26 --gpu-memory-utilization 0.85 --trust-remote-code)
     CMD=("$HOME/venv-vllm/bin/vllm" "${FLAGS[@]}") ;;
   sglang)

@@ -38,6 +38,8 @@ def test_vllm_request_shape_and_order():
     assert body["prompt"] == [1, 2, 3] and body["max_tokens"] == 1 and body["temperature"] == 0
     assert body["allowed_token_ids"] == [10, 11] and body["logprobs"] == 2
     assert body["return_tokens_as_token_ids"] is True and body["model"] == "yev"
+    # the model's generation_config must not leak penalties into the letter log-probs
+    assert body["repetition_penalty"] == 1.0 and body["frequency_penalty"] == 0 and body["presence_penalty"] == 0
 
 
 def test_vllm_missing_letter_is_engine_error():
@@ -69,7 +71,8 @@ def test_sglang_request_shape_and_parse():
     assert out == [[-0.75, -0.5, -0.25]]  # parsed by id, returned in letter order
     path, body = seen[0]
     assert path == "/generate" and body["input_ids"] == [5, 6]
-    assert body["sampling_params"] == {"max_new_tokens": 1, "temperature": 0}
+    assert body["sampling_params"] == {"max_new_tokens": 1, "temperature": 0, "repetition_penalty": 1.0,
+                                       "frequency_penalty": 0, "presence_penalty": 0}
     assert body["return_logprob"] is True and body["token_ids_logprob"] == [10, 11, 12]
 
 
