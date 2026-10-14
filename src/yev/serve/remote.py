@@ -1,11 +1,13 @@
 """``/v1/systemone`` answered by a vLLM or SGLang sidecar (``yev serve --backend vllm|sglang``).
 
 Same rows, token ids, length check, calibration and answer shape as ``Engine``; only the letter scores come from
-the sidecar (``yev.serve.backends``). Async, so concurrent requests reach the engine together.
+the sidecar (``yev.serve.backends``). Async, so concurrent requests reach the engine together; tokenization runs
+in a worker thread so it never holds the event loop.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Mapping
 
 from yev.format import LETTERS
@@ -25,7 +27,7 @@ class RemoteEngine(Engine):
 
     async def answer_async(self, state: Any, questions: Mapping[str, Any]) -> tuple[dict, dict]:
         rows = to_rows(state, questions)
-        ids = self._checked_ids(rows)
+        ids = await asyncio.to_thread(self._checked_ids, rows)
         scores = await self.backend.letter_logprobs(ids, [self.letter_ids[: len(r["letters"])] for r in rows])
         probs = [readout.probs(z, len(r["letters"]), self.temperature(r["type"])) for r, z in zip(rows, scores)]
         return to_answers(questions, rows, probs), {"input_tokens": sum(len(x) for x in ids), "output_tokens": 0}
@@ -33,7 +35,7 @@ class RemoteEngine(Engine):
     async def chat_probs_async(self, messages) -> dict[str, float]:
         msgs = [_message(m) for m in messages]
         labels = _labels(msgs)
-        ids = self._checked_ids([{"messages": msgs}])
+        ids = await asyncio.to_thread(self._checked_ids, [{"messages": msgs}])
         idx = [LETTERS.index(L) for L in labels]
         z = (await self.backend.letter_logprobs(ids, [[self.letter_ids[i] for i in idx]]))[0]
         p = readout.probs(z, len(labels), self.temperature(_infer_type(msgs) or ""))

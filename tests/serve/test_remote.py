@@ -105,3 +105,49 @@ def test_remote_requests_overlap(tok):
     rs, dt = asyncio.run(go())
     assert all(r.status_code == 200 for r in rs)
     assert b.peak == 8 and dt < 1.5
+
+
+class SlowTok:
+    """The fake tokenizer, but each chat-template call holds the thread for a while (like Jinja on an 8k state)."""
+
+    def __init__(self, tok, delay):
+        self.tok, self.delay = tok, delay
+
+    def encode(self, *a, **k):
+        return self.tok.encode(*a, **k)
+
+    def apply_chat_template(self, *a, **k):
+        time.sleep(self.delay)
+        return self.tok.apply_chat_template(*a, **k)
+
+
+def test_tokenization_does_not_block_the_event_loop(tok):
+    app = create_app(remote(SlowTok(tok, 0.25), StubBackend()))
+
+    async def go():
+        async with _client(app) as c:
+            t = time.perf_counter()
+            rs = await asyncio.gather(*(c.post("/v1/systemone", json={"state": f"s{i}", "questions": {"c": CHOICE}})
+                                        for i in range(6)))
+            return rs, time.perf_counter() - t
+
+    rs, dt = asyncio.run(go())
+    assert all(r.status_code == 200 for r in rs)
+    assert dt < 1.0  # serialised on the loop this is >= 6 x 0.25 s
+
+
+def test_remote_chat_completions_endpoint(tok):
+    app = create_app(remote(tok, StubBackend()))
+    user = json.dumps({"state": "s", "question": "q?",
+                       "options": [{"label": "B", "key": "x"}, {"label": "A", "key": "y"}]})
+
+    async def go():
+        async with _client(app) as c:
+            return await c.post("/v1/chat/completions", json={"model": "m", "logprobs": True,
+                                                              "messages": [{"role": "user", "content": user}]})
+
+    r = asyncio.run(go())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["choices"][0]["message"]["content"] == "B"  # first label scores highest in the stub
+    assert {t["token"] for t in body["choices"][0]["logprobs"]["content"][0]["top_logprobs"]} == {"A", "B"}

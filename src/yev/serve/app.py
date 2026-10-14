@@ -9,6 +9,7 @@ concurrent requests reach the engine together; an unusable engine answer is a 50
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 
@@ -63,10 +64,9 @@ def create_app(engine, model_name: str = "yev-4b") -> FastAPI:
     def _systemone_response(answers, usage) -> SystemOneResponse:
         return SystemOneResponse.model_validate({"model": model_name, "answers": answers, "usage": usage})
 
-    def _chat_response(req: ChatRequest, probs: dict) -> ChatResponse:
+    def _chat_response(req: ChatRequest, probs: dict, prompt_tokens: int) -> ChatResponse:
         letter = max(probs, key=probs.get)
-        out = ChatResponse.build(model=model_name, content=letter,
-                                 prompt_tokens=engine.n_tokens(req.messages), completion_tokens=1)
+        out = ChatResponse.build(model=model_name, content=letter, prompt_tokens=prompt_tokens, completion_tokens=1)
         if req.logprobs:
             top = [{"token": L, "logprob": math.log(max(p, 1e-300)), "bytes": list(L.encode())}
                    for L, p in sorted(probs.items(), key=lambda kv: -kv[1])]
@@ -80,7 +80,8 @@ def create_app(engine, model_name: str = "yev-4b") -> FastAPI:
 
         @app.post("/v1/chat/completions", response_model=ChatResponse, response_model_exclude_none=True)
         async def chat(req: ChatRequest) -> ChatResponse:
-            return _chat_response(req, await engine.chat_probs_async(req.messages))
+            probs = await engine.chat_probs_async(req.messages)
+            return _chat_response(req, probs, await asyncio.to_thread(engine.n_tokens, req.messages))
     else:
         @app.post("/v1/systemone", response_model=SystemOneResponse)
         def systemone(req: SystemOneRequest) -> SystemOneResponse:
@@ -88,7 +89,7 @@ def create_app(engine, model_name: str = "yev-4b") -> FastAPI:
 
         @app.post("/v1/chat/completions", response_model=ChatResponse, response_model_exclude_none=True)
         def chat(req: ChatRequest) -> ChatResponse:
-            return _chat_response(req, engine.chat_probs(req.messages))
+            return _chat_response(req, engine.chat_probs(req.messages), engine.n_tokens(req.messages))
 
     @app.get("/v1/models", response_model=ModelsResponse)
     def models() -> ModelsResponse:
