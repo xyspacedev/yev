@@ -26,3 +26,9 @@ def test_engines_ignore_model_generation_config_and_fit_max_len():
     # yev serve accepts prompts of up to --max-len (16384) tokens; vLLM needs prompt + 1 <= max_model_len
     # and SGLang needs prompt < context_length, so the engines get one more.
     assert 'MAXLEN="${MAXLEN:-16385}"' in text
+
+
+@pytest.mark.parametrize("path", SCRIPTS[:2])
+def test_setup_installs_python_headers(path):
+    # Triton compiles a C helper against Python.h when vLLM/SGLang start; the DLAMI has no python3.12-dev.
+    assert "python3.12-dev" in Path(path).read_text()
