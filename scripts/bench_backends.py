@@ -48,8 +48,10 @@ def grid_questions(n: int) -> dict:
 
 
 def grid_body(tokens: int, n_questions: int, i: int) -> dict:
-    """Request i of a grid cell: a state unique to i (so no repeat hits a sidecar's cross-request prefix cache)."""
-    return {"state": f"Request {i}.\n" + grid_state(tokens), "questions": grid_questions(n_questions)}
+    """Request i of a grid cell: a state unique to the cell and to i, so neither a repeat nor a later cell hits a
+    sidecar's cross-request prefix cache."""
+    return {"state": f"Request {tokens}-{n_questions}-{i}.\n" + grid_state(tokens),
+            "questions": grid_questions(n_questions)}
 
 
 def replay_requests(rows: list[dict], n: int, seed: int) -> list[dict]:

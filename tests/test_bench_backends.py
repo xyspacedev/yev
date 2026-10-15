@@ -52,6 +52,14 @@ def test_grid_bodies_have_unique_states_of_similar_length():
     assert max(lens) - min(lens) <= 2 and len(bodies[0]["questions"]) == 4
 
 
+def test_grid_states_differ_across_cells():
+    # Cells run one after another on the same server: a 4-question cell must not reuse the 1-question cell's cached
+    # state, or it times a cache hit (it measured faster than the 1-question cell).
+    states = {bb.grid_body(tok, nq, i)["state"] for tok in bb.STATE_TOKENS for nq in bb.QUESTIONS
+              for i in range(-bb.WARMUP, bb.TIMED)}
+    assert len(states) == len(bb.STATE_TOKENS) * len(bb.QUESTIONS) * (bb.WARMUP + bb.TIMED)
+
+
 def test_replay_sets_are_disjoint_per_level_and_warmup_is_separate():
     rows = [dev_row(i, f"s{i}") for i in range(60)]
     warm, sets = bb.replay_sets(rows, n=10, seed=0, levels=4, warmup=2)

@@ -37,3 +37,8 @@ def test_setup_installs_python_headers(path):
 def test_engine_runs_with_its_own_venv_on_path():
     # The engines JIT-build kernels with tools from their venv (ninja); without it on PATH they fail at startup.
     assert 'export PATH="$HOME/venv-$NAME/bin:$PATH"' in Path("scripts/aws/serve_engine.sh").read_text()
+
+
+def test_engine_takes_extra_args_for_tuning():
+    text = Path("scripts/aws/serve_engine.sh").read_text()
+    assert 'read -r -a EXTRA <<< "${ENGINE_ARGS:-}"' in text and '"${EXTRA[@]}"' in text
