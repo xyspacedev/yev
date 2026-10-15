@@ -25,3 +25,21 @@ def test_merged_matches_adapter(tmp_path, tiny_model):
     with torch.no_grad():
         got = merged(input_ids=x).logits
     assert torch.allclose(got, want, atol=1e-4)
+
+
+def test_merged_weights_use_text_only_names(tmp_path):
+    # Qwen3.5 saves as Qwen3_5ForCausalLM but keeps the multimodal "model.language_model." prefix; SGLang loads
+    # none of those names and serves NaN logits, so the export renames them to the text layout.
+    import json
+
+    from safetensors.torch import load_file, save_file
+
+    from yev.serve.merge import _text_only_names
+    save_file({"model.language_model.layers.0.w": torch.zeros(2), "lm_head.weight": torch.ones(2)}, tmp_path / "model.safetensors")
+    (tmp_path / "model.safetensors.index.json").write_text(json.dumps(
+        {"metadata": {}, "weight_map": {"model.language_model.layers.0.w": "model.safetensors",
+                                        "lm_head.weight": "model.safetensors"}}))
+    _text_only_names(str(tmp_path))
+    assert set(load_file(tmp_path / "model.safetensors")) == {"model.layers.0.w", "lm_head.weight"}
+    index = json.loads((tmp_path / "model.safetensors.index.json").read_text())
+    assert set(index["weight_map"]) == {"model.layers.0.w", "lm_head.weight"}
