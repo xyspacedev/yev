@@ -17,6 +17,8 @@ case "$NAME" in
     CMD=("$HOME/venv-sglang/bin/python" -m sglang.launch_server "${FLAGS[@]}") ;;
   *) echo "usage: $0 vllm|sglang MODEL_DIR" >&2; exit 2 ;;
 esac
+# The engines JIT-build kernels with tools from their own venv (ninja), so it goes first on PATH.
+export PATH="$HOME/venv-$NAME/bin:$PATH"
 echo "${CMD[*]}" > "$HOME/engine-$NAME.flags"
 setsid nohup "${CMD[@]}" > "$HOME/engine-$NAME.log" 2>&1 < /dev/null &
 echo $! > "$HOME/engine-$NAME.pid"

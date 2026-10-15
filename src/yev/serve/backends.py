@@ -31,10 +31,18 @@ class _Backend:
             timeout=TIMEOUT_S, limits=httpx.Limits(max_connections=512, max_keepalive_connections=512))
 
     async def _post(self, path: str, body: dict) -> dict:
-        try:
-            r = await self.client.post(f"{self.url}{path}", json=body)
-        except httpx.HTTPError as exc:
-            raise EngineError(f"{self.name} engine at {self.url}: {type(exc).__name__}: {exc}") from exc
+        # One retry on a dropped connection: the engine's server closes idle keep-alive sockets after 5 s, the same
+        # as httpx's pool expiry, so a request can go out on a socket it just closed. Scoring is idempotent.
+        for attempt in (1, 2):
+            try:
+                r = await self.client.post(f"{self.url}{path}", json=body)
+                break
+            except httpx.TransportError as exc:
+                if attempt == 1 and not isinstance(exc, httpx.TimeoutException):
+                    continue
+                raise EngineError(f"{self.name} engine at {self.url}: {type(exc).__name__}: {exc}") from exc
+            except httpx.HTTPError as exc:
+                raise EngineError(f"{self.name} engine at {self.url}: {type(exc).__name__}: {exc}") from exc
         if r.status_code != 200:
             raise EngineError(f"{self.name} engine at {self.url} returned {r.status_code}: {r.text[:500]}")
         return r.json()

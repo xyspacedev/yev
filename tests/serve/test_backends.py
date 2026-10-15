@@ -102,3 +102,23 @@ def test_make_backend():
     assert isinstance(make_backend("sglang", "http://x"), SGLangBackend)
     with pytest.raises(ValueError):
         make_backend("tgi", "http://x")
+
+
+@pytest.mark.parametrize("make", [lambda c: VLLMBackend("http://engine", c),
+                                  lambda c: SGLangBackend("http://engine", c)])
+def test_dropped_keepalive_connection_is_retried_once(make):
+    # The engine's server closes idle keep-alive sockets after 5 s, the same as httpx's pool expiry, so a request
+    # can go out on a socket the server just closed. Scoring is idempotent, so one retry is safe.
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ReadError("")
+        body = json.loads(request.content)
+        if "allowed_token_ids" in body:
+            return vllm_ok(request)
+        return httpx.Response(200, json={"meta_info": {"output_token_ids_logprobs": [[[-0.1, 10, None]]]}})
+
+    assert len(run(make(client(handler)).letter_logprobs([[1]], [[10]]))[0]) == 1
+    assert len(calls) == 2

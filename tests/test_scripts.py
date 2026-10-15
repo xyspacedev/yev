@@ -32,3 +32,8 @@ def test_engines_ignore_model_generation_config_and_fit_max_len():
 def test_setup_installs_python_headers(path):
     # Triton compiles a C helper against Python.h when vLLM/SGLang start; the DLAMI has no python3.12-dev.
     assert "python3.12-dev" in Path(path).read_text()
+
+
+def test_engine_runs_with_its_own_venv_on_path():
+    # The engines JIT-build kernels with tools from their venv (ninja); without it on PATH they fail at startup.
+    assert 'export PATH="$HOME/venv-$NAME/bin:$PATH"' in Path("scripts/aws/serve_engine.sh").read_text()
