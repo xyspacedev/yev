@@ -12,11 +12,11 @@ case "$NAME" in
     FLAGS=(serve "$MODEL" --host 127.0.0.1 --port "$PORT" --served-model-name yev --dtype bfloat16
            --max-model-len "$MAXLEN" --enable-prefix-caching --generation-config vllm --logprobs-mode processed_logprobs
            --max-logprobs 26 --gpu-memory-utilization 0.85 --trust-remote-code)
-    CMD=("$HOME/venv-vllm/bin/vllm" "${FLAGS[@]}" "${EXTRA[@]}") ;;
+    CMD=("$HOME/venv-vllm/bin/vllm" "${FLAGS[@]}" ${EXTRA[@]+"${EXTRA[@]}"}) ;;
   sglang)
     FLAGS=(--model-path "$MODEL" --host 127.0.0.1 --port "$PORT" --dtype bfloat16
            --context-length "$MAXLEN" --mem-fraction-static 0.85 --trust-remote-code)
-    CMD=("$HOME/venv-sglang/bin/python" -m sglang.launch_server "${FLAGS[@]}" "${EXTRA[@]}") ;;
+    CMD=("$HOME/venv-sglang/bin/python" -m sglang.launch_server "${FLAGS[@]}" ${EXTRA[@]+"${EXTRA[@]}"}) ;;
   *) echo "usage: $0 vllm|sglang MODEL_DIR" >&2; exit 2 ;;
 esac
 # The engines JIT-build kernels with tools from their own venv (ninja), so it goes first on PATH.
