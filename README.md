@@ -19,6 +19,7 @@ logits.
 |---|---|---|---|
 | yev0-4b | Qwen3.5-4B-Base | `yev-data-short`: 44,228 rows, 28.2M tokens | [choyiny/yev0-4b](https://huggingface.co/choyiny/yev0-4b) |
 | yev1-4b | Qwen3.5-4B-Base | `yev-data-long`: 80,730 rows, 101.5M tokens | [choyiny/yev1-4b](https://huggingface.co/choyiny/yev1-4b) |
+| yev0-35b-a3b | Qwen3.6-35B-A3B | `yev-data-short`, the same rows as yev0 | [choyiny/yev0-35b-a3b](https://huggingface.co/choyiny/yev0-35b-a3b) (LoRA adapter) |
 | yev2-35b-a3b | Qwen3.6-35B-A3B | `yev-data-long`, the same rows as yev1 | [choyiny/yev2-35b-a3b](https://huggingface.co/choyiny/yev2-35b-a3b), [FP8](https://huggingface.co/choyiny/yev2-35b-a3b-fp8) |
 
 `yev-data-short` is the `stage0` recipe: short decisions with up to 6 options. `yev-data-long` is the `stage1c` recipe:
@@ -33,7 +34,7 @@ Two training sets and two base models, every combination trained with the same L
 | | `yev-data-short` (44k rows) | `yev-data-long` (81k rows) |
 |---|---|---|
 | **Qwen3.5-4B-Base** | yev0-4b | yev1-4b |
-| **Qwen3.6-35B-A3B** | yev0-35b-a3b (not released) | yev2-35b-a3b |
+| **Qwen3.6-35B-A3B** | yev0-35b-a3b | yev2-35b-a3b |
 
 Qwen3.6-35B-A3B is a mixture-of-experts model with about 3B parameters active per token. Each model trains on its data
 set's own recipe (`stage0` or `stage1c`), with only the base model swapped; yev1 and yev2 use the same file (same
