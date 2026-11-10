@@ -1,0 +1,11 @@
+{
+  "name": "yev0data-qwen36-35b-a3b",
+  "model_path": "/home/ubuntu/models/Qwen3.6-35B-A3B",
+  "train_path": "/home/ubuntu/yev/data/mix/stage0/train.chat.jsonl",
+  "out_dir": "/home/ubuntu/runs/yev0data-qwen36-35b-a3b",
+  "fraction": 1.0,
+  "lambda_pair": 0,
+  "lambda_perm": 0,
+  "twin_rate": 0,
+  "lambda_rps": 0.5
+}
