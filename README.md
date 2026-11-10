@@ -17,55 +17,59 @@ logits.
 
 | Model | Base | Training data | Hugging Face |
 |---|---|---|---|
-| yev0-4b | Qwen3.5-4B-Base | Stage 0: 44,228 rows, 28.2M tokens | [choyiny/yev0-4b](https://huggingface.co/choyiny/yev0-4b) |
-| yev1-4b | Qwen3.5-4B-Base | Stage 1c: 80,730 rows, 101.5M tokens | [choyiny/yev1-4b](https://huggingface.co/choyiny/yev1-4b) |
-| yev2-35b-a3b | Qwen3.6-35B-A3B | Stage 1c, the same rows as yev1 | [choyiny/yev2-35b-a3b](https://huggingface.co/choyiny/yev2-35b-a3b), [FP8](https://huggingface.co/choyiny/yev2-35b-a3b-fp8) |
+| yev0-4b | Qwen3.5-4B-Base | `yev-data-short`: 44,228 rows, 28.2M tokens | [choyiny/yev0-4b](https://huggingface.co/choyiny/yev0-4b) |
+| yev1-4b | Qwen3.5-4B-Base | `yev-data-long`: 80,730 rows, 101.5M tokens | [choyiny/yev1-4b](https://huggingface.co/choyiny/yev1-4b) |
+| yev2-35b-a3b | Qwen3.6-35B-A3B | `yev-data-long`, the same rows as yev1 | [choyiny/yev2-35b-a3b](https://huggingface.co/choyiny/yev2-35b-a3b), [FP8](https://huggingface.co/choyiny/yev2-35b-a3b-fp8) |
+
+`yev-data-short` is the `stage0` recipe: short decisions with up to 6 options. `yev-data-long` is the `stage1c` recipe:
+it adds long documents, up to 10 options, agent traces and policy rules.
 
 All weights are Apache-2.0 (see `LICENSE`). Third-party datasets keep their own licences; each model repo has a `NOTICE`.
 
 ## Better data or a better model?
 
-Each step changed one thing:
+Two training sets and two base models, every combination trained with the same LoRA recipe:
 
-1. **yev0 → yev1: better data, same model.** Stage 1c added long documents, questions with up to 10 options, agent
-   traces and policy rules, and new decision families. The base model and the LoRA recipe stayed the same.
-2. **yev1 → yev2: better model, same data.** The same 80,730 training rows (same file, same sha256) and the same
-   hyper-parameters, on a larger base: Qwen3.6-35B-A3B, a mixture-of-experts model with about 3B parameters active per
-   token.
-
-| Benchmark | yev0-4b | yev1-4b | yev2-35b-a3b | Jev (TypeSafe, API) | Open model with a result |
-|---|---:|---:|---:|---:|---|
-| DecideBench v2 (450), accuracy | 78.2 | 79.3 | **88.0** | 86.2 | 85.3, Clef 27B (self-hosted) |
-| DecideBench v2, pair accuracy | 60.0 | 62.7 | **78.2** | 72.9 | 72.4, Clef 27B (self-hosted) |
-| DecideBench v1 (400), accuracy | 94.5 | 95.25 | 97.75 | **98.0** | 95.0, imajev-4b |
-| JevBench public (231), accuracy | 78.4 | 82.7 | **90.5** | 86.6 (Jev 1.13.0) | 86.2, Imajev-4B |
-| DynaBench test (543), F1 | 55.7 | 67.5 | **75.9** | – | 73.1, DynaGuard-8B (published) |
-
-**What each step did:**
-
-- **Better data** moved the benchmarks closest to what it added, policy rules and long documents: DynaBench +12 F1,
-  JevBench +4. It barely moved DecideBench (v2 +1.1, v1 +0.75).
-- **A better model** moved every benchmark, including DecideBench, which the data step left nearly flat: DecideBench v2
-  +8.7, v1 +2.5, JevBench +7.8, DynaBench +8.
-
-So far, the base model explains more of the gain on held-out decision sets. Better data fixed specific failure modes
-that a better model alone may or may not fix.
-
-**The missing cell.** The steps happened in sequence, so the effects are not yet separated. A fourth run, yev0's
-Stage 0 data and config on the Qwen3.6-35B-A3B base, completes the 2×2 and shows how much of yev2's gain the larger
-base gets on its own. *In progress.*
-
-| | Stage 0 data | Stage 1c data |
+| | `yev-data-short` (44k rows) | `yev-data-long` (81k rows) |
 |---|---|---|
-| Qwen3.5-4B-Base | yev0-4b | yev1-4b |
-| Qwen3.6-35B-A3B | *in progress* | yev2-35b-a3b |
+| **Qwen3.5-4B-Base** | yev0-4b | yev1-4b |
+| **Qwen3.6-35B-A3B** | 35B on `yev-data-short` (not released) | yev2-35b-a3b |
+
+Qwen3.6-35B-A3B is a mixture-of-experts model with about 3B parameters active per token. Each model trains on its data
+set's own recipe (`stage0` or `stage1c`), with only the base model swapped; yev1 and yev2 use the same file (same
+sha256).
+
+| Benchmark | yev0-4b | yev1-4b | 35B on `yev-data-short` | yev2-35b-a3b | Jev (TypeSafe, API) | Open model with a result |
+|---|---:|---:|---:|---:|---:|---|
+| DecideBench v2 (450), accuracy | 78.2 | 79.3 | 86.0 | **88.0** | 86.2 | 85.3, Clef 27B (self-hosted) |
+| DecideBench v2, pair accuracy | 60.0 | 62.7 | 74.7 | **78.2** | 72.9 | 72.4, Clef 27B (self-hosted) |
+| DecideBench v1 (400), accuracy | 94.5 | 95.25 | **98.0** | 97.75 | **98.0** | 95.0, imajev-4b |
+| JevBench public (231), accuracy | 78.4 | 82.7 | 87.4 | **90.5** | 86.6 (Jev 1.13.0) | 86.2, Imajev-4B |
+| DynaBench test (543), F1 | 55.7 | 67.5 | **83.7** | 75.9 | – | 73.1, DynaGuard-8B (published) |
+
+**The answer: the base model, by a wide margin.**
+
+| Benchmark | Better model, on `yev-data-short` | Better model, on `yev-data-long` | Better data, on 4B | Better data, on 35B |
+|---|---:|---:|---:|---:|
+| DecideBench v2 | +7.8 | +8.7 | +1.1 | +2.0 |
+| DecideBench v1 | +3.5 | +2.5 | +0.75 | −0.25 |
+| JevBench public | +9.0 | +7.8 | +4.3 | +3.1 |
+| DynaBench F1 | +28.0 | +8.4 | +11.8 | −7.8 |
+
+- **The larger base helps on every benchmark, with either data set.** On DecideBench v2 it adds about 8 points either
+  way; on DynaBench it adds 28 F1 with the short data.
+- **Better data helps a little on top, but not everywhere.** It adds 1–4 points on DecideBench v2 and JevBench with
+  either base. On the 4B base it was worth 12 F1 on DynaBench; on the 35B base the long data scores 8 F1 lower there.
+- **The best model combines both** on DecideBench v2 and JevBench, but most of yev2's lead over yev1 comes from the base:
+  35B on the short data already beats yev1 on every benchmark here, beats Jev on JevBench and ties it on
+  DecideBench v2.
 
 **Caveats.**
 
 - One training run per cell. DecideBench v2's 95 % interval is about ±3 points, so differences of 1–2 points are noise.
-- Stage 0 reads at most 6 options and trains on prompts up to 4,096 tokens. DecideBench v2 has questions with 8–10
-  options and long prompts, so on v2 the data comparison also measures whether the model can read those at all.
-- A run on gemma-4-E4B (Stage 1c data) stayed at chance accuracy after 1,000 steps and was stopped. The likely cause is
+- `yev-data-short` has at most 6 options and prompts up to 4,096 tokens. It did not hold the short-data models back on
+  DecideBench v2's 100 questions with 8–10 options: every model scored higher on those than on the rest.
+- A run on gemma-4-E4B (`yev-data-long`) stayed at chance accuracy after 1,000 steps and was stopped. The likely cause is
   the chat template, which the base model does not ship and was borrowed from the instruction-tuned model. It was not
   investigated further, so it says nothing about the question.
 - The Jev and open-model columns come from the DecideBench leaderboard and published results, not from runs in this
@@ -129,7 +133,7 @@ response examples, limits and error behaviour.
 | Serving | `yev serve` | `src/yev/serve/` |
 
 Training configs: `configs/stage0/lc100.json` (yev0), `configs/stage1/stage1c.json` (yev1),
-`configs/yev2/yev2-qwen36-35b-a3b.json` (yev2) and `configs/yev2/yev0data-qwen36-35b-a3b.json` (the fourth cell).
+`configs/yev2/yev2-qwen36-35b-a3b.json` (yev2) and `configs/yev2/yev0data-qwen36-35b-a3b.json` (35B on `yev-data-short`).
 Design documents and implementation plans are in `docs/superpowers/`. `scripts/aws/` runs training on a single cloud
 GPU. It reads the host and SSH key from the `YEV_TRAIN_HOST` and `YEV_TRAIN_KEY` environment variables.
 
