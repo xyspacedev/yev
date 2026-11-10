@@ -33,13 +33,13 @@ Two training sets and two base models, every combination trained with the same L
 | | `yev-data-short` (44k rows) | `yev-data-long` (81k rows) |
 |---|---|---|
 | **Qwen3.5-4B-Base** | yev0-4b | yev1-4b |
-| **Qwen3.6-35B-A3B** | 35B on `yev-data-short` (not released) | yev2-35b-a3b |
+| **Qwen3.6-35B-A3B** | yev0-35b-a3b (not released) | yev2-35b-a3b |
 
 Qwen3.6-35B-A3B is a mixture-of-experts model with about 3B parameters active per token. Each model trains on its data
 set's own recipe (`stage0` or `stage1c`), with only the base model swapped; yev1 and yev2 use the same file (same
 sha256).
 
-| Benchmark | yev0-4b | yev1-4b | 35B on `yev-data-short` | yev2-35b-a3b | Jev (TypeSafe, API) | Open model with a result |
+| Benchmark | yev0-4b | yev1-4b | yev0-35b-a3b | yev2-35b-a3b | Jev (TypeSafe, API) | Open model with a result |
 |---|---:|---:|---:|---:|---:|---|
 | DecideBench v2 (450), accuracy | 78.2 | 79.3 | 86.0 | **88.0** | 86.2 | 85.3, Clef 27B (self-hosted) |
 | DecideBench v2, pair accuracy | 60.0 | 62.7 | 74.7 | **78.2** | 72.9 | 72.4, Clef 27B (self-hosted) |
@@ -61,7 +61,7 @@ sha256).
 - **Better data helps a little on top, but not everywhere.** It adds 1–4 points on DecideBench v2 and JevBench with
   either base. On the 4B base it was worth 12 F1 on DynaBench; on the 35B base the long data scores 8 F1 lower there.
 - **The best model combines both** on DecideBench v2 and JevBench, but most of yev2's lead over yev1 comes from the base:
-  35B on the short data already beats yev1 on every benchmark here, beats Jev on JevBench and ties it on
+  yev0-35b-a3b already beats yev1 on every benchmark here, beats Jev on JevBench and ties it on
   DecideBench v2.
 
 **Caveats.**
@@ -133,7 +133,7 @@ response examples, limits and error behaviour.
 | Serving | `yev serve` | `src/yev/serve/` |
 
 Training configs: `configs/stage0/lc100.json` (yev0), `configs/stage1/stage1c.json` (yev1),
-`configs/yev2/yev2-qwen36-35b-a3b.json` (yev2) and `configs/yev2/yev0data-qwen36-35b-a3b.json` (35B on `yev-data-short`).
+`configs/yev2/yev2-qwen36-35b-a3b.json` (yev2) and `configs/yev2/yev0-35b-a3b.json` (yev0-35b-a3b).
 Design documents and implementation plans are in `docs/superpowers/`. `scripts/aws/` runs training on a single cloud
 GPU. It reads the host and SSH key from the `YEV_TRAIN_HOST` and `YEV_TRAIN_KEY` environment variables.
 
