@@ -23,7 +23,7 @@ from yev.filters.contamination import (
 from yev.filters.pipeline import assert_clean, run_filters
 from yev.filters.shortcut import run_shortcut
 from yev.mix import build_mix, write_mix
-from yev.generators import padding
+from yev.generators import padding, prompt_template
 from yev.generators import actions, drills, invoices, many_options, returns, returns_v2, scales, severity
 from yev.generators import agent_triples, invoice_actions, policy_counts
 from yev.generators.common import EDIT_TYPES
@@ -221,11 +221,23 @@ def cmd_mix(args: argparse.Namespace) -> int:
         print(f"recipe not found: {recipe_path}")
         return 2
     recipe = json.loads(recipe_path.read_text())
-    result = build_mix(recipe, load_fingerprints())
-    report = write_mix(result, recipe, args.out)
+    count = None
+    if "prompt_template" in recipe:
+        try:
+            prompt_template.parse_spec(recipe["prompt_template"])
+            count = padding.load_token_counter(allow_heuristic=args.allow_heuristic)
+        except (prompt_template.TemplateError, padding.TokenizerUnavailable) as e:
+            print(str(e))
+            return 2
+    fingerprints = load_fingerprints()
+    result = build_mix(recipe, fingerprints)
+    report = write_mix(result, recipe, args.out, fingerprints=fingerprints, count=count)
     print(f"train={report['train']['rows']} dev={report['dev']['rows']} calibration={report['calibration']['rows']}")
     for name, b in report["blocks"].items():
         print(f"  {name}: shortfall={b['shortfall']}")
+    for split, t in report.get("prompt_template", {}).items():
+        print(f"  prompt_template {split}: {t['templated']}/{t['rows']} rows, +{t['wrapper_tokens']} tokens, "
+              f"no_room={t['no_room']}")
     return 0
 
 
@@ -1182,6 +1194,8 @@ def make_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("mix", help="assemble train/dev/calibration splits from a recipe")
     p.add_argument("--recipe", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--allow-heuristic", action="store_true",
+                   help="prompt_template recipes: estimate tokens with len/4 x 2.0 when the tokenizer is missing")
     p.set_defaults(func=cmd_mix)
 
     p = sub.add_parser("gen-rules", help="generate rule-based contrastive clusters")
