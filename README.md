@@ -25,6 +25,9 @@ logits.
 `yev-data-short` is the `stage0` recipe: short decisions with up to 6 options. `yev-data-long` is the `stage1c` recipe:
 it adds long documents, up to 10 options, agent traces and policy rules.
 
+`recipes/stage1d.json` is the next data set, not yet trained on: the `stage1c` rows with 80 % of their states
+rewritten as interpolated production prompts (see [Prompt templates](#prompt-templates)).
+
 All weights are Apache-2.0 (see `LICENSE`). Third-party datasets keep their own licences; each model repo has a `NOTICE`.
 
 ## Better data or a better model?
@@ -132,6 +135,31 @@ response examples, limits and error behaviour.
 | External benchmarks | `yev bench build / score / overlap` | `src/yev/bench/` |
 | Merged weights | `yev export-merged` | `src/yev/train/` |
 | Serving | `yev serve` | `src/yev/serve/` |
+
+### Prompt templates
+
+Callers rarely send a bare record. They keep a prompt template (a role, background on the pipeline, a list of
+instructions) and interpolate each production record into it. A recipe with a `prompt_template` block makes `yev mix`
+rewrite states that way (`src/yev/generators/prompt_template.py`):
+
+```json
+"prompt_template": {"rate": 0.8, "tokens": [120, 1000], "max_tokens": 11800,
+                    "exclude_families": ["many_options"], "exclude_sources": ["decidebench"]}
+```
+
+- **What changes:** only `state`. Rows, splits, worked examples, option order, questions and labels are those of the
+  same recipe without the block, so `stage1d` differs from `stage1c` in the wrapper alone.
+- **The wrapper:** instruction text of 120–1,000 tokens in one of five styles, then the record with opaque metadata
+  (request ID, tenant, prompt version) in one of eight layouts (XML tags, fenced block, JSON, `key: value` and others).
+  It tells the reader how to read the input and states no policy, number or default answer.
+- **Consistency:** a template is drawn per unit, so contrastive siblings share a wrapper, and a row's worked examples
+  are wrapped with the row's own template.
+- **Length:** the whole prompt stays within `max_tokens`; the wrapper is shortened to fit, and a row with no room
+  stays bare. `mix_report.json` counts templated, excluded and no-room rows and the tokens added.
+- `many_options` is excluded because its labels come from a keyword rule over the state. DecideBench dev rows are
+  never templated.
+
+`docs/samples/stage1d-prompt-templates.md` has before-and-after examples.
 
 Training configs: `configs/stage0/lc100.json` (yev0), `configs/stage1/stage1c.json` (yev1),
 `configs/yev2/yev2-qwen36-35b-a3b.json` (yev2) and `configs/yev2/yev0-35b-a3b.json` (yev0-35b-a3b).

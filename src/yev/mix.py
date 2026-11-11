@@ -14,6 +14,7 @@ from pathlib import Path
 from yev.filters.contamination import Fingerprints, normalize_tokens
 from yev.filters.pipeline import assert_clean
 from yev.format import ExamplePool, render
+from yev.generators import prompt_template
 from yev.generators.padding import FAMILY as PADDED_FAMILY
 from yev.generators.padding import doc_id
 from yev.licences import is_allowed
@@ -314,7 +315,11 @@ def build_mix(recipe: dict, fingerprints: Fingerprints) -> MixResult:
     return MixResult(train, dev, calibration, report)
 
 
-def write_mix(result: MixResult, recipe: dict, out_dir: str | Path) -> dict:
+def write_mix(result: MixResult, recipe: dict, out_dir: str | Path, fingerprints: Fingerprints | None = None,
+              count=None) -> dict:
+    """Write the splits and their chat rendering. A recipe with a `prompt_template` block gets its states
+    rewritten as interpolated production prompts first (yev.generators.prompt_template); that needs `count`, a
+    token counter, and the templated train and calibration rows are checked against `fingerprints` when given."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     # Long families (rows near the length limit) neither get worked examples nor serve as examples.
@@ -332,12 +337,26 @@ def write_mix(result: MixResult, recipe: dict, out_dir: str | Path) -> dict:
         picks[split] = {i: cand[i] for i in chosen}
         counts[f"{split}_eligible"] = len(eligible)
         counts[f"{split}_examples"] = n
-    for split, rows in (("train", result.train), ("dev", result.dev), ("calibration", result.calibration)):
+    splits = {"train": result.train, "dev": result.dev, "calibration": result.calibration}
+    templated: dict = {}
+    if "prompt_template" in recipe:
+        if count is None:
+            raise ValueError("recipe has a prompt_template block: write_mix needs a token counter")
+        # After the example picks, so the rows, their examples and (below) their option order are those of
+        # the same recipe without templates.
+        for split, rows in splits.items():
+            splits[split], picks[split], templated[split] = prompt_template.apply(
+                rows, picks.get(split, {}), recipe["prompt_template"], recipe.get("seed", 0), unit_key, count)
+        if fingerprints is not None:
+            assert_clean(splits["train"] + splits["calibration"], fingerprints)
+    for split, rows in splits.items():
         write_jsonl(out / f"{split}.jsonl", rows)
         with (out / f"{split}.chat.jsonl").open("w", encoding="utf-8") as f:
             for d in rows:
                 f.write(json.dumps(render(d, rng, picks.get(split, {}).get(d.id)), ensure_ascii=False) + "\n")
     report = dict(result.report)
     report["format"] = {k: counts[k] for k in ("train_examples", "train_eligible", "dev_examples", "dev_eligible")}
+    if templated:
+        report["prompt_template"] = templated
     (out / "mix_report.json").write_text(json.dumps(report, indent=2))
     return report
